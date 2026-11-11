@@ -15,6 +15,18 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Contains("--uninstall"))
+        {
+            Installer.Uninstall();
+            Shutdown();
+            return;
+        }
+        if (Installer.IsSetupFile)
+        {
+            Installer.Install();
+            Shutdown();
+            return;
+        }
         if (e.Args.Contains("--diagnose"))
         {
             Diagnose(open: !e.Args.Contains("--no-open"));
@@ -52,7 +64,7 @@ public partial class App : Application
         {
             var paths = AppPaths.Default();
             var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("AccountDeck/0.1");
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("AccountDeck/1.0");
             service = new DeckService(paths, new WindowsDesktopHost(paths), new DpapiProtector(), http);
         }
 

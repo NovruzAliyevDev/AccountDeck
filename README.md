@@ -5,16 +5,17 @@ and watch how much of each account's plan limit is used, from one window and a t
 
 ## Install
 
-You need Windows 10/11 and the [.NET 10 SDK](https://dotnet.microsoft.com/download).
+1. Download **AccountDeck-Setup.exe** from the [latest release](https://github.com/NovruzAliyevDev/AccountDeck/releases/latest).
+2. Double-click it and choose **Install**.
 
-```powershell
-.\install.ps1
-```
+That is all: nothing else needs to be installed, and no administrator rights are needed. Account
+Deck appears in the Start menu and opens straight away. To update, run a newer setup file; your
+saved accounts are kept. To remove it, use Windows Settings > Apps > Installed apps.
 
-This builds the app, installs it for your Windows user (no administrator rights), adds
-**Account Deck** to the Start menu and opens it. Run it again to update. `.\uninstall.ps1` removes it.
+The file is not code-signed, so Windows may show "Windows protected your PC" the first time.
+Choose **More info > Run anyway**.
 
-To try the app safely first, run it on sample accounts. Nothing real is touched:
+To try the app on sample accounts without touching anything real:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\AccountDeck\AccountDeck.exe" --demo
@@ -91,14 +92,16 @@ tests/AccountDeck.Tests xUnit tests that run every switch on temporary folders
 ```powershell
 dotnet test tests\AccountDeck.Tests --artifacts-path "$env:TEMP\AccountDeck-build"
 dotnet run --project src\AccountDeck.App --artifacts-path "$env:TEMP\AccountDeck-build" -- --demo
+.\install.ps1    # build from source and install (needs the .NET 10 SDK)
+.elease.ps1    # run the tests and build dist\AccountDeck-Setup.exe
 ```
 
-`--artifacts-path` keeps build output in a short folder; it is only needed when the repository
-sits in a very deep path.
+The setup file is the app itself, published as one self-contained file. Started under a name
+containing "Setup" it copies itself to `%LOCALAPPDATA%\Programs\AccountDeck`, adds the Start menu
+shortcut and the Installed apps entry, and opens the installed copy.
 
 ## Status
 
-Version 0.1. Every switch is covered by automated tests on temporary folders, and the whole app can
-be exercised in demo mode. Detection of the real Claude Desktop (data folder, how to start it, which
-processes to close) is verified on a Microsoft Store install. Claude Desktop is never switched
-automatically, on purpose: switching it closes the app.
+Version 1.0. Every switch is covered by automated tests on temporary folders, and the whole app can
+be exercised in demo mode. Switching and session sharing are in daily use on a Microsoft Store
+install of Claude Desktop; the classic installer build and Codex are covered by tests only.
