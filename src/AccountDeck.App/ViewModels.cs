@@ -104,6 +104,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         get => Autostart.IsEnabled;
         set { Autostart.Set(value); Raise(); }
     }
+    public bool ShareDesktopSessions { get => S.ShareDesktopSessions; set => Change(s => s.ShareDesktopSessions = value); }
     public bool CloseToTray { get => S.CloseToTray; set => Change(s => s.CloseToTray = value); }
     public bool KeepSignInsFresh { get => S.KeepSignInsFresh; set => Change(s => s.KeepSignInsFresh = value); }
     public bool NotifyOnHighUsage { get => S.NotifyOnHighUsage; set => Change(s => s.NotifyOnHighUsage = value); }
@@ -205,7 +206,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Status = install is null ? "Not installed" : _desktopRunning ? "Running" : "Not running",
             Hint = install is null ? "Claude Desktop was not found on this computer."
                 : profiles.Count == 0 ? "Open Claude Desktop and sign in once. Your account will then appear here."
-                : profiles.Count == 1 ? "Add a second account to switch between them. Each account keeps its own chats, settings and sign-in."
+                : profiles.Count == 1 ? S.ShareDesktopSessions
+                    ? "Add a second account to switch between them. Your sessions, settings and files are shared by all accounts; only the sign-in changes."
+                    : "Add a second account to switch between them. Each account keeps its own sessions, settings and sign-in."
                 : "",
             CanAdd = install is not null && profiles.Count > 0,
             Add = new RelayCommand(AddDesktop),
@@ -286,9 +289,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void AddDesktop()
     {
+        var shared = S.ShareDesktopSessions;
         var answer = Dialog.Ask("Add a Claude Desktop account",
-            "Your current account is saved first. Claude Desktop then restarts with an empty sign-in screen, where you log in with the other account.\n\nGive the new account a name:",
-            "Add account", input: _service.State.NextName(AccountKind.Desktop), check: "Copy my app preferences to the new account", checkDefault: true);
+            "Your current sign-in is saved first. Claude Desktop then restarts signed out, and you log in with the other account.\n\n" +
+            (shared ? "Your sessions, settings and files stay in place and will be available in both accounts." : "The new account starts with its own empty set of sessions and settings.") +
+            "\n\nGive the new account a name:",
+            "Add account", input: _service.State.NextName(AccountKind.Desktop),
+            check: shared ? null : "Copy my app preferences to the new account", checkDefault: true);
         if (answer is null) return;
         _ = Run("Preparing a clean Claude Desktop…", () => _service.AddDesktopAsync(answer.Text, answer.Checked));
     }
@@ -324,7 +331,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Remove(Profile p)
     {
-        var what = p.Kind == AccountKind.Desktop
+        var what = p.Kind == AccountKind.Desktop && S.ShareDesktopSessions
+            ? "Only the saved sign-in is removed. Sessions and settings are shared and stay in place. Your account itself is not affected."
+            : p.Kind == AccountKind.Desktop
             ? "Its chat history on this computer, settings and sign-in will be moved to the Recycle Bin. Your account itself and anything stored online are not affected."
             : "Only the saved sign-in on this computer is removed. Your account itself is not affected.";
         if (Dialog.Ask($"Remove \"{p.Name}\"?", what, "Remove") is null) return;

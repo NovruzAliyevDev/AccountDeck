@@ -22,7 +22,7 @@ public interface IDesktopHost
 /// <see cref="AppPaths.DesktopStore"/>. A marker file inside each folder says which profile it is,
 /// so the state can be rebuilt if a switch is interrupted.
 /// </summary>
-public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
+public sealed partial class DesktopSwitcher(AppPaths paths, IDesktopHost host)
 {
     public const string MarkerName = ".accountdeck-profile.json";
     private const string SettingsFile = "claude_desktop_config.json";
@@ -64,7 +64,7 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         {
             // A switch was interrupted after parking the old folder: put the active one back.
             var active = state.Active(AccountKind.Desktop);
-            if (active is not null && Directory.Exists(Parked(active.Id)))
+            if (active is not null && Directory.Exists(Parked(active.Id)) && ReadMarker(Parked(active.Id)) is not { AuthOnly: true })
             {
                 if (Directory.Exists(live)) Directory.Delete(live);
                 FileUtil.MoveDirectory(Parked(active.Id), live, attempts: 4);
@@ -105,8 +105,15 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
             log?.Invoke($"Claude Desktop account \"{p.Name}\" was removed because its data folder is gone.");
         }
 
+        var shared = state.Settings.ShareDesktopSessions;
         foreach (var p in state.Of(AccountKind.Desktop))
-            ReadDetails(p, state.IsActive(p) ? live : Parked(p.Id), state);
+            ReadDetails(p, state.IsActive(p) ? live : Parked(p.Id), state, shared);
+
+        if (shared && Directory.Exists(live))
+        {
+            var copied = SyncSessions(state, live);
+            if (copied > 0) log?.Invoke($"Shared {copied} Claude Desktop session(s) between accounts. Restart Claude Desktop if they do not show up.");
+        }
     }
 
     public void Switch(AppState state, string targetId, bool relaunch = true)
@@ -117,7 +124,14 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         if (!Directory.Exists(Parked(target.Id)))
             throw new DeckException($"The saved data for \"{target.Name}\" is missing.");
 
-        Swap(state, install, current, () => FileUtil.MoveDirectory(Parked(target.Id), install.DataDir), target);
+        var shared = state.Settings.ShareDesktopSessions;
+        if (shared != ReadMarker(Parked(target.Id)) is { AuthOnly: true })
+            throw new DeckException(shared
+                ? $"\"{target.Name}\" was saved as a separate copy. Turn off \"Share sessions between accounts\" in Settings to switch to it."
+                : $"\"{target.Name}\" was saved with shared sessions. Turn on \"Share sessions between accounts\" in Settings to switch to it.");
+
+        if (shared) SwapSignIn(state, install, current, target, restore: true);
+        else Swap(state, install, current, () => FileUtil.MoveDirectory(Parked(target.Id), install.DataDir), target);
         if (relaunch) host.Launch(install);
     }
 
@@ -134,7 +148,8 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         state.Profiles.Add(created);
         try
         {
-            Swap(state, install, current, () =>
+            if (state.Settings.ShareDesktopSessions) SwapSignIn(state, install, current, created, restore: false);
+            else Swap(state, install, current, () =>
             {
                 Directory.CreateDirectory(install.DataDir);
                 if (settings is not null) File.WriteAllText(Path.Combine(install.DataDir, SettingsFile), settings);
@@ -211,24 +226,26 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         target.LastUsedAt = DateTimeOffset.Now;
     }
 
-    private sealed record Marker(string Id, string Name);
+    private sealed record Marker(string Id, string Name, bool AuthOnly);
 
     private static Marker? ReadMarker(string dir)
     {
         var json = FileUtil.ReadJsonObject(Path.Combine(dir, MarkerName));
         var id = json?["id"]?.GetValue<string>();
-        return string.IsNullOrEmpty(id) ? null : new Marker(id, json?["name"]?.GetValue<string>() ?? "");
+        return string.IsNullOrEmpty(id) ? null
+            : new Marker(id, json?["name"]?.GetValue<string>() ?? "", json?["authOnly"]?.GetValue<bool>() == true);
     }
 
-    private static void WriteMarker(string dir, Profile p) =>
-        FileUtil.WriteAtomic(Path.Combine(dir, MarkerName), new JsonObject { ["id"] = p.Id, ["name"] = p.Name }.ToJsonString());
+    private static void WriteMarker(string dir, Profile p, bool authOnly = false) =>
+        FileUtil.WriteAtomic(Path.Combine(dir, MarkerName), new JsonObject { ["id"] = p.Id, ["name"] = p.Name, ["authOnly"] = authOnly }.ToJsonString());
 
     /// <summary>Reads what Claude Desktop itself recorded: which account it is and its recent plan usage.</summary>
-    private static void ReadDetails(Profile p, string dir, AppState state)
+    private static void ReadDetails(Profile p, string dir, AppState state, bool shared)
     {
         try
         {
-            var uuid = FileUtil.ReadJsonObject(Path.Combine(dir, "config.json"))?["lastKnownAccountUuid"]?.GetValue<string>();
+            var uuid = (FileUtil.ReadJsonObject(Path.Combine(dir, "config.json")) ?? FileUtil.ReadJsonObject(Path.Combine(dir, AuthConfigName)))
+                ?["lastKnownAccountUuid"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(uuid)) p.AccountKey = uuid;
             // Claude Desktop does not store the e-mail in plain text; borrow it from a Claude Code sign-in of the same account.
             var twin = state.Of(AccountKind.ClaudeCode).FirstOrDefault(c => c.AccountKey == p.AccountKey && c.Email is not null);
@@ -236,7 +253,9 @@ public sealed class DesktopSwitcher(AppPaths paths, IDesktopHost host)
 
             var samples = FileUtil.ReadJsonObject(Path.Combine(dir, "plan-usage-history.json"))?["samples"] as JsonArray;
             var last = samples?.OfType<JsonObject>().LastOrDefault();
-            if (last?["u"] is JsonObject u && last["t"] is JsonValue t)
+            // With a shared folder the usage file is shared too: ignore what another account recorded before this one came in.
+            if (last?["u"] is JsonObject u && last["t"] is JsonValue t
+                && !(shared && p.LastUsedAt is { } since && DateTimeOffset.FromUnixTimeMilliseconds(t.GetValue<long>()) < since))
             {
                 p.Usage = new UsageSnapshot
                 {

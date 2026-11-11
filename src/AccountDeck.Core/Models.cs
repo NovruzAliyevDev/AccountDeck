@@ -38,6 +38,11 @@ public sealed class Profile
 public sealed class Settings
 {
     public bool CloseToTray { get; set; } = true;
+    /// <summary>
+    /// On: Claude Desktop accounts share one data folder (sessions, settings, files) and only the
+    /// sign-in is swapped. Off: every account gets its own complete copy of the data folder.
+    /// </summary>
+    public bool ShareDesktopSessions { get; set; } = true;
     public int RefreshMinutes { get; set; } = 5;
     public bool KeepSignInsFresh { get; set; } = true;
     public bool NotifyOnHighUsage { get; set; } = true;

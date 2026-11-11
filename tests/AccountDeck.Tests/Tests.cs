@@ -59,12 +59,15 @@ public sealed class PlainProtector : ISecretProtector
 
 public class DesktopTests
 {
+    /// <summary>Every account keeps its own complete data folder.</summary>
+    private static AppState Separate() => new() { Settings = { ShareDesktopSessions = false } };
+
     [Fact]
     public void First_run_saves_the_current_sign_in_as_a_profile()
     {
         using var box = new Sandbox();
         box.SeedLive("alice", "uuid-a");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
 
         desktop.Reconcile(state);
@@ -82,7 +85,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
 
         var bob = desktop.AddNew(state, "Bob", copySettings: true);
@@ -102,7 +105,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         var bob = desktop.AddNew(state, "Bob", copySettings: false);
         box.SeedLive("bob");
@@ -123,7 +126,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         var bob = desktop.AddNew(state, "Bob", copySettings: false);
         box.SeedLive("bob");
@@ -145,7 +148,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         box.Host.CloseSucceeds = false;
 
@@ -160,7 +163,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         desktop.Reconcile(state);
         var alice = state.Profiles.Single();
@@ -178,11 +181,11 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         desktop.AddNew(state, "Bob", copySettings: false);
 
-        var fresh = new AppState();
+        var fresh = Separate();
         new DesktopSwitcher(box.Paths, box.Host).Reconcile(fresh);
 
         Assert.Equal(2, fresh.Profiles.Count);
@@ -195,7 +198,7 @@ public class DesktopTests
     {
         using var box = new Sandbox();
         box.SeedLive("alice");
-        var state = new AppState();
+        var state = Separate();
         var desktop = new DesktopSwitcher(box.Paths, box.Host);
         var bob = desktop.AddNew(state, "Bob", copySettings: false);
         var alice = state.Profiles.Single(p => p != bob);
@@ -214,13 +217,143 @@ public class DesktopTests
         box.SeedLive("alice");
         File.WriteAllText(Path.Combine(box.Live, "plan-usage-history.json"),
             "{\"version\":2,\"samples\":[{\"t\":1791874051774,\"org\":\"o\",\"u\":{\"fh\":2,\"sd\":9}},{\"t\":1792397821880,\"org\":\"o\",\"u\":{\"fh\":30,\"sd\":35.5}}]}");
-        var state = new AppState();
+        var state = Separate();
 
         new DesktopSwitcher(box.Paths, box.Host).Reconcile(state);
 
         var usage = state.Profiles.Single().Usage!;
         Assert.Equal(30, usage.FiveHour);
         Assert.Equal(35.5, usage.SevenDay);
+    }
+}
+
+public class SharedSessionsTests
+{
+    private const string Org = "org-1";
+
+    /// <summary>What a signed-in Claude Desktop leaves in its data folder.</summary>
+    private static void SignIn(Sandbox box, string who)
+    {
+        Directory.CreateDirectory(Path.Combine(box.Live, "Network"));
+        File.WriteAllText(Path.Combine(box.Live, "Network", "Cookies"), who);
+        var config = FileUtil.ReadJsonObject(Path.Combine(box.Live, "config.json")) ?? new JsonObject { ["locale"] = "en-US" };
+        config["oauth:tokenCache"] = "token-" + who;
+        config["lastKnownAccountUuid"] = "acc-" + who;
+        File.WriteAllText(Path.Combine(box.Live, "config.json"), config.ToJsonString());
+        Directory.CreateDirectory(Path.Combine(box.Live, "claude-code-sessions", "acc-" + who, Org));
+    }
+
+    private static string Session(Sandbox box, string who, string id, string org = Org) =>
+        Path.Combine(box.Live, "claude-code-sessions", "acc-" + who, org, "local_" + id + ".json");
+
+    private static JsonObject Config(Sandbox box) => FileUtil.ReadJsonObject(Path.Combine(box.Live, "config.json"))!;
+
+    private static (AppState, DesktopSwitcher, Profile alice, Profile bob) TwoAccounts(Sandbox box)
+    {
+        SignIn(box, "alice");
+        File.WriteAllText(Session(box, "alice", "s1"), "session one");
+        File.WriteAllText(Path.Combine(box.Live, "claude_desktop_config.json"), "shared settings");
+        var state = new AppState();
+        var desktop = new DesktopSwitcher(box.Paths, box.Host);
+        var bob = desktop.AddNew(state, "Bob", copySettings: false);
+        var alice = state.Profiles.Single(p => p != bob);
+        return (state, desktop, alice, bob);
+    }
+
+    [Fact]
+    public void Adding_an_account_signs_out_but_keeps_everything_else_in_place()
+    {
+        using var box = new Sandbox();
+        var (state, _, alice, bob) = TwoAccounts(box);
+
+        Assert.True(state.IsActive(bob));
+        Assert.False(Directory.Exists(Path.Combine(box.Live, "Network")));           // browser login gone
+        Assert.Null(Config(box)["oauth:tokenCache"]);                                // tokens gone
+        Assert.Equal("en-US", Config(box)["locale"]!.ToString());                    // other settings kept
+        Assert.Equal("session one", File.ReadAllText(Session(box, "alice", "s1")));  // sessions stay where they are
+        Assert.Equal("shared settings", File.ReadAllText(Path.Combine(box.Live, "claude_desktop_config.json")));
+        Assert.Equal("alice", File.ReadAllText(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies")));
+        Assert.Equal("acc-alice", alice.AccountKey);
+    }
+
+    [Fact]
+    public void Switching_swaps_only_the_sign_in_and_shares_sessions_both_ways()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, bob) = TwoAccounts(box);
+        SignIn(box, "bob");
+        File.WriteAllText(Session(box, "bob", "s2"), "session two");
+
+        desktop.Switch(state, alice.Id);
+
+        Assert.Equal("alice", box.LiveCookies);
+        Assert.Equal("token-alice", Config(box)["oauth:tokenCache"]!.ToString());
+        Assert.Equal("acc-alice", Config(box)["lastKnownAccountUuid"]!.ToString());
+        Assert.True(state.IsActive(alice));
+        Assert.Equal("acc-bob", bob.AccountKey);
+        Assert.Equal("session two", File.ReadAllText(Session(box, "alice", "s2"))); // Bob's session now listed for Alice
+        Assert.Equal("session one", File.ReadAllText(Session(box, "bob", "s1")));   // and Alice's for Bob
+
+        desktop.Switch(state, bob.Id);
+
+        Assert.Equal("bob", box.LiveCookies);
+        Assert.Equal("token-bob", Config(box)["oauth:tokenCache"]!.ToString());
+        Assert.True(state.IsActive(bob));
+        Assert.False(Directory.Exists(Path.Combine(box.Paths.DesktopStore, bob.Id)));
+    }
+
+    [Fact]
+    public void The_newest_copy_of_a_session_wins_and_deleted_sessions_stay_deleted()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, _) = TwoAccounts(box);
+        SignIn(box, "bob");
+        desktop.Reconcile(state); // first pass copies s1 to Bob
+        File.WriteAllText(Session(box, "bob", "s1"), "continued by bob");
+        File.SetLastWriteTimeUtc(Session(box, "bob", "s1"), DateTime.UtcNow.AddMinutes(5));
+        File.WriteAllText(Session(box, "bob", "gone"), "deleted by alice");
+        File.WriteAllText(Path.Combine(box.Live, "claude-code-sessions", "acc-alice", Org, "deleted_gone"), "");
+        Directory.CreateDirectory(Path.GetDirectoryName(Session(box, "bob", "other", "org-2"))!);
+        File.WriteAllText(Session(box, "bob", "other", "org-2"), "from another organisation");
+
+        desktop.Switch(state, alice.Id);
+
+        Assert.Equal("continued by bob", File.ReadAllText(Session(box, "alice", "s1")));
+        Assert.False(File.Exists(Session(box, "alice", "gone")));
+        Assert.Equal("from another organisation", File.ReadAllText(Session(box, "alice", "other"))); // lands in Alice's own organisation
+        Assert.Equal(0, desktop.SyncSessions(state, box.Live)); // nothing left to do
+    }
+
+    [Fact]
+    public void A_failed_switch_restores_the_current_sign_in()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, bob) = TwoAccounts(box);
+        SignIn(box, "bob");
+
+        using (File.Open(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Throws<DeckException>(() => desktop.Switch(state, alice.Id));
+        }
+
+        Assert.Equal("bob", box.LiveCookies);
+        Assert.Equal("token-bob", Config(box)["oauth:tokenCache"]!.ToString());
+        Assert.True(state.IsActive(bob));
+        Assert.Equal("alice", File.ReadAllText(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies")));
+        Assert.Equal("token-alice", FileUtil.ReadJsonObject(Path.Combine(box.Paths.DesktopStore, alice.Id, "auth-config.json"))!["oauth:tokenCache"]!.ToString());
+    }
+
+    [Fact]
+    public void Accounts_saved_in_the_other_mode_are_refused_with_an_explanation()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, _) = TwoAccounts(box);
+        state.Settings.ShareDesktopSessions = false;
+
+        var error = Assert.Throws<DeckException>(() => desktop.Switch(state, alice.Id));
+
+        Assert.Contains("Share sessions", error.Message);
+        Assert.Equal(1, box.Host.Closed); // only the AddNew closed Claude; the refused switch did not
     }
 }
 

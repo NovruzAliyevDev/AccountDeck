@@ -18,7 +18,7 @@ public static class Demo
         if (Directory.Exists(root)) Directory.Delete(root, true);
         var paths = new AppPaths(Path.Combine(root, "Local"), Path.Combine(root, "Roaming"), Path.Combine(root, "Home"));
         var host = new DemoHost(new DesktopInstall(Path.Combine(paths.Local, "Claude-Data", "claude_demo"), true, null, null));
-        var state = new AppState();
+        var state = new AppState { Settings = { ShareDesktopSessions = false } };
 
         // Two Claude Code sign-ins, saved the same way a real one would be.
         var code = new ClaudeCodeSwitcher(paths, new DpapiProtector());

@@ -143,6 +143,11 @@
                             <CheckBox Content="Start Account Deck when I sign in to Windows" IsChecked="{Binding StartWithWindows}" />
                             <CheckBox Content="Keep running next to the clock when I close the window" IsChecked="{Binding CloseToTray}" Margin="0,4,0,0" />
 
+                            <TextBlock Text="Claude Desktop" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,8" />
+                            <CheckBox Content="Share sessions between accounts" IsChecked="{Binding ShareDesktopSessions}" />
+                            <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="28,0,0,0"
+                                       Text="On: all accounts use the same Claude Desktop data, so your Code sessions, settings and files are there whichever account is signed in. Only the sign-in is swapped. Off: every account gets its own separate copy of everything. An account added in one mode can only be switched to in that mode." />
+
                             <TextBlock Text="Usage" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,8" />
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="Check usage every" VerticalAlignment="Center" />

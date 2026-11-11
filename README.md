@@ -40,8 +40,12 @@ the account with the most room left.
 ### Good to know
 
 - **Switching Claude Desktop closes and reopens it.** Anything it is doing at that moment stops.
-  Each Claude Desktop account has its own chats list, settings, MCP configuration and Cowork/Code
-  sessions on this computer, because the whole data folder is swapped.
+- **Claude Desktop sessions are shared between accounts by default** (Settings > Share sessions
+  between accounts). All accounts use one data folder, so Code sessions, settings, MCP
+  configuration and files are there whichever account is signed in; only the sign-in is swapped.
+  Claude Desktop lists Code sessions per account, so Account Deck also copies each session's entry
+  to the other accounts (newest version wins, deleted sessions stay deleted). Cowork sessions are
+  not copied. Turn the setting off to give every account its own complete, separate data folder.
 - **Claude Code and Codex switch instantly**, but a session that is already open keeps the account
   it started with until you restart it.
 - Claude Desktop usage is what Claude Desktop itself last recorded, so it can be a little old for
@@ -51,7 +55,8 @@ the account with the most room left.
 
 | Tool | Where the sign-in lives | What a switch does |
 | --- | --- | --- |
-| Claude Desktop (Microsoft Store) | `%LOCALAPPDATA%\Claude-Data\claude_<id>` | Close Claude, rename that folder into `%LOCALAPPDATA%\AccountDeck\desktop-profiles\<id>`, rename the chosen profile folder into its place, start Claude. |
+| Claude Desktop (Microsoft Store), shared sessions | `%LOCALAPPDATA%\Claude-Data\claude_<id>` | Close Claude, move only the sign-in pieces (`Network`, `Local Storage`, `Session Storage`, `IndexedDB`, `WebStorage`, `SharedStorage` and the `oauth:*` entries of `config.json`) into `%LOCALAPPDATA%\AccountDeck\desktop-profiles\<id>`, move the chosen account's pieces in, copy session entries across `claude-code-sessions\<account>\<org>`, start Claude. |
+| Claude Desktop (Microsoft Store), separate | same folder | Close Claude, rename the whole folder into `desktop-profiles\<id>`, rename the chosen profile folder into its place, start Claude. |
 | Claude Desktop (classic installer) | `%APPDATA%\Claude` | The same, with that folder. |
 | Claude Code | `claudeAiOauth` in `~\.claude\.credentials.json`, `oauthAccount` in `~\.claude.json` | Rewrite only those two entries; everything else in the files is kept. |
 | Codex | `~\.codex\auth.json` (or `%CODEX_HOME%`) | Replace the file. |
