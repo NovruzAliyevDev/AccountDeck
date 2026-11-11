@@ -111,7 +111,7 @@ public sealed partial class DesktopSwitcher
     /// <summary>
     /// Claude Desktop files each Code session under the account and organisation that started it
     /// (claude-code-sessions\account\organisation\local_id.json), so another account does not list it.
-    /// This copies each session of an account managed here into the folders of the other managed accounts, newest version wins.
+    /// This copies each session of an account managed here into every organisation folder of all managed accounts, newest version wins.
     /// Sessions the user deleted in any account are left alone. Returns how many files were copied.
     /// </summary>
     public int SyncSessions(AppState state, string live)
@@ -147,22 +147,19 @@ public sealed partial class DesktopSwitcher
         var copied = 0;
         foreach (var account in targets)
         {
-            var mine = files.Where(f => f.Account == account).ToList();
             var orgs = Directory.GetDirectories(Path.Combine(root, account)).Select(d => Path.GetFileName(d)!).ToList();
-            if (orgs.Count == 0) continue;
-            // Sessions from an organisation this account is not part of go to the one it used last.
-            var home = orgs.OrderByDescending(org => mine.Where(f => f.Org == org).Select(f => f.Time)
-                .DefaultIfEmpty(Directory.GetLastWriteTimeUtc(Path.Combine(root, account, org))).Max()).First();
-
+            // Claude Desktop only lists the folder of the organisation the account is working in, and which
+            // one that is cannot be read from disk, so every organisation folder of the account gets a copy.
+            foreach (var org in orgs)
             foreach (var source in newest)
             {
                 var id = source.Name["local_".Length..^".json".Length];
-                if (source.Account == account || deleted.Contains(id)) continue;
-                var existing = mine.FirstOrDefault(f => f.Name == source.Name);
-                if (existing is not null && existing.Time >= source.Time) continue;
-                var destination = existing?.Path ?? Path.Combine(root, account, orgs.Contains(source.Org) ? source.Org : home, source.Name);
+                if (deleted.Contains(id)) continue;
+                var existing = files.FirstOrDefault(f => f.Account == account && f.Org == org && f.Name == source.Name);
+                if (existing is not null && (existing.Path == source.Path || existing.Time >= source.Time)) continue;
                 try
                 {
+                    var destination = Path.Combine(root, account, org, source.Name);
                     File.Copy(source.Path, destination, true);
                     File.SetLastWriteTimeUtc(destination, source.Time);
                     copied++;

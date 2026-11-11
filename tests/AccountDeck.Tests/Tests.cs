@@ -325,6 +325,24 @@ public class SharedSessionsTests
     }
 
     [Fact]
+    public void Sessions_reach_every_organisation_folder_of_the_other_account()
+    {
+        // Seen on a real PC: both accounts have a folder for both organisations, but each works in a different one.
+        using var box = new Sandbox();
+        var (state, desktop, alice, _) = TwoAccounts(box);
+        SignIn(box, "bob");
+        Directory.CreateDirectory(Path.GetDirectoryName(Session(box, "bob", "x", "org-2"))!);
+        Directory.CreateDirectory(Path.GetDirectoryName(Session(box, "alice", "x", "org-2"))!);
+        File.WriteAllText(Session(box, "bob", "s2", "org-2"), "bob works in org-2");
+
+        desktop.Switch(state, alice.Id);
+
+        Assert.Equal("bob works in org-2", File.ReadAllText(Session(box, "alice", "s2", "org-1")));
+        Assert.Equal("session one", File.ReadAllText(Session(box, "bob", "s1", "org-2")));
+        Assert.Equal(0, desktop.SyncSessions(state, box.Live));
+    }
+
+    [Fact]
     public void A_failed_switch_restores_the_current_sign_in()
     {
         using var box = new Sandbox();
