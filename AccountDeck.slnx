@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AccountDeck.App/AccountDeck.App.csproj" />
+    <Project Path="src/AccountDeck.Core/AccountDeck.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AccountDeck.Tests/AccountDeck.Tests.csproj" />
+  </Folder>
+</Solution>
