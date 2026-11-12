@@ -547,4 +547,33 @@ public class StateTests
         Assert.True(loaded.IsActive(loaded.Profiles[0]));
         Assert.True(loaded.Settings.AutoSwitchClaudeCode);
     }
+
+    [Fact]
+    public void Store_build_that_keeps_its_data_in_roaming_is_found_there()
+    {
+        using var box = new Sandbox();
+        Directory.CreateDirectory(Path.Combine(box.Paths.Local, "Packages", "Claude_test"));
+        Directory.CreateDirectory(Path.Combine(box.Paths.Local, "Claude-Data"));
+        var roaming = Path.Combine(box.Paths.Roaming, "Claude");
+        Directory.CreateDirectory(roaming);
+        File.WriteAllText(Path.Combine(roaming, "config.json"), "{}");
+
+        var install = new WindowsDesktopHost(box.Paths).Detect();
+
+        Assert.Equal(roaming, install!.DataDir);
+        Assert.True(install.IsStore);
+    }
+
+    [Fact]
+    public void Store_build_prefers_the_moved_data_folder_over_the_roaming_marker()
+    {
+        using var box = new Sandbox();
+        Directory.CreateDirectory(Path.Combine(box.Paths.Local, "Packages", "Claude_test"));
+        var moved = Path.Combine(box.Paths.Local, "Claude-Data", "claude_test");
+        Directory.CreateDirectory(moved);
+        File.WriteAllText(Path.Combine(moved, "config.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(box.Paths.Roaming, "Claude"));
+
+        Assert.Equal(moved, new WindowsDesktopHost(box.Paths).Detect()!.DataDir);
+    }
 }
