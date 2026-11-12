@@ -10,8 +10,11 @@ public sealed class WindowsDesktopHost(AppPaths paths) : IDesktopHost
 {
     public DesktopInstall? Detect()
     {
-        // Microsoft Store build: data lives in %LOCALAPPDATA%\Claude-Data\claude_<publisher>,
-        // not in %APPDATA%\Claude (which only holds a "data has moved" marker).
+        var roaming = Path.Combine(paths.Roaming, "Claude");
+
+        // Microsoft Store build. Depending on the version its data lives in
+        // %LOCALAPPDATA%\Claude-Data\claude_<publisher> (with %APPDATA%\Claude holding only a
+        // "data has moved" marker), inside the package folder, or in %APPDATA%\Claude itself.
         var packages = Path.Combine(paths.Local, "Packages");
         var package = Directory.Exists(packages) ? Directory.GetDirectories(packages, "Claude_*").FirstOrDefault() : null;
         if (package is not null)
@@ -19,21 +22,25 @@ public sealed class WindowsDesktopHost(AppPaths paths) : IDesktopHost
             var family = Path.GetFileName(package);
             var publisher = family[(family.IndexOf('_') + 1)..];
             var dataRoot = Path.Combine(paths.Local, "Claude-Data");
-            var data = Path.Combine(dataRoot, "claude_" + publisher);
+            var moved = Path.Combine(dataRoot, "claude_" + publisher);
             var legacy = Path.Combine(package, "LocalCache", "Roaming", "Claude");
-            // Older Store builds kept the data inside the package folder.
-            if (!Directory.Exists(dataRoot) && File.Exists(Path.Combine(legacy, "config.json"))) data = legacy;
+            var data = new[] { moved, legacy, roaming }.FirstOrDefault(HasProfile)
+                // Nothing signed in yet, or a switch parked the folder: guess from what exists.
+                ?? (Directory.Exists(dataRoot) && Directory.EnumerateFileSystemEntries(dataRoot).Any() ? moved : roaming);
             return new DesktopInstall(data, true, family + "!Claude", null);
         }
 
         // Classic installer build.
         var exe = Path.Combine(paths.Local, "AnthropicClaude", "claude.exe");
-        var roaming = Path.Combine(paths.Roaming, "Claude");
         if (File.Exists(exe) || File.Exists(Path.Combine(roaming, "config.json")))
             return new DesktopInstall(roaming, false, null, File.Exists(exe) ? exe : null);
 
         return null;
     }
+
+    /// <summary>A real data folder, not a "data has moved" marker.</summary>
+    private static bool HasProfile(string dir) =>
+        File.Exists(Path.Combine(dir, "config.json")) || File.Exists(Path.Combine(dir, DesktopSwitcher.MarkerName));
 
     public bool IsRunning(DesktopInstall install) => Targets(install, appOnly: true).Count > 0;
 
