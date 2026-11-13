@@ -33,6 +33,31 @@ public sealed class Sandbox : IDisposable
 
     public string LiveCookies => File.ReadAllText(Path.Combine(Live, "Network", "Cookies"));
 
+    /// <summary>
+    /// Makes a parked account impossible to move until disposed, the way a program holding its files does.
+    /// Windows refuses to rename a folder with an open file in it; macOS and Linux do not, so there the folder is made read-only.
+    /// </summary>
+    public IDisposable Hold(string profileId)
+    {
+        var dir = Path.Combine(Paths.DesktopStore, profileId);
+        if (OperatingSystem.IsWindows())
+            return File.Open(Path.Combine(dir, "Network", "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None);
+        return HoldUnix(dir);
+    }
+
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static IDisposable HoldUnix(string dir)
+    {
+        var mode = File.GetUnixFileMode(dir);
+        File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        return new Release(() => File.SetUnixFileMode(dir, mode));
+    }
+
+    private sealed class Release(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(Root, true); } catch (IOException) { }
@@ -133,7 +158,7 @@ public class DesktopTests
         var alice = state.Profiles.Single(p => p != bob);
 
         // Something keeps a file open inside the account we want to switch to.
-        using (File.Open(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None))
+        using (box.Hold(alice.Id))
         {
             Assert.Throws<DeckException>(() => desktop.Switch(state, alice.Id));
         }
@@ -349,7 +374,7 @@ public class SharedSessionsTests
         var (state, desktop, alice, bob) = TwoAccounts(box);
         SignIn(box, "bob");
 
-        using (File.Open(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None))
+        using (box.Hold(alice.Id))
         {
             Assert.Throws<DeckException>(() => desktop.Switch(state, alice.Id));
         }
@@ -533,7 +558,8 @@ public class StateTests
     {
         using var box = new Sandbox();
         var store = new StateStore(box.Paths);
-        var dpapi = new DpapiProtector();
+        // The real protector of the platform the tests run on (DPAPI on Windows, AES-GCM elsewhere).
+        ISecretProtector dpapi = OperatingSystem.IsWindows() ? new DpapiProtector() : new AesGcmProtector(() => new byte[32]);
         var state = new AppState();
         state.Profiles.Add(new Profile { Kind = AccountKind.ClaudeCode, Name = "A", Secret = dpapi.Protect("top-secret") });
         state.ActiveIds[AccountKind.ClaudeCode] = state.Profiles[0].Id;
@@ -546,5 +572,135 @@ public class StateTests
         Assert.Equal("top-secret", dpapi.Unprotect(loaded.Profiles.Single().Secret!));
         Assert.True(loaded.IsActive(loaded.Profiles[0]));
         Assert.True(loaded.Settings.AutoSwitchClaudeCode);
+    }
+}
+
+public class MacPortTests
+{
+    [Fact]
+    public void Aes_protector_round_trips_and_rejects_tampering()
+    {
+        var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var protector = new AesGcmProtector(() => key);
+
+        var a = protector.Protect("top-secret");
+        var b = protector.Protect("top-secret");
+
+        Assert.NotEqual(a, b); // fresh nonce every time
+        Assert.DoesNotContain("top-secret", Encoding.UTF8.GetString(Convert.FromBase64String(a)));
+        Assert.Equal("top-secret", protector.Unprotect(a));
+
+        var bytes = Convert.FromBase64String(a);
+        bytes[^1] ^= 1;
+        Assert.ThrowsAny<System.Security.Cryptography.CryptographicException>(() => protector.Unprotect(Convert.ToBase64String(bytes)));
+        Assert.ThrowsAny<System.Security.Cryptography.CryptographicException>(
+            () => new AesGcmProtector(() => new byte[32]).Unprotect(a)); // wrong key
+    }
+
+    private sealed class MemoryStore : ICredentialStore
+    {
+        public JsonObject? Value;
+        public JsonObject? Read() => Value?.DeepClone().AsObject();
+        public void Write(JsonObject credentials) => Value = credentials.DeepClone().AsObject();
+        public string Describe => "memory";
+    }
+
+    [Fact]
+    public void Claude_Code_tokens_go_through_the_credential_store_not_the_file()
+    {
+        using var box = new Sandbox();
+        var store = new MemoryStore();
+        var state = new AppState();
+        var code = new ClaudeCodeSwitcher(box.Paths, new PlainProtector(), store);
+
+        void SignIn(string who)
+        {
+            var credentials = store.Value ?? new JsonObject { ["mcpOAuth"] = "keep-me" };
+            credentials["claudeAiOauth"] = new JsonObject { ["accessToken"] = "access-" + who, ["refreshToken"] = "refresh-" + who };
+            store.Value = credentials;
+            Directory.CreateDirectory(box.Paths.UserProfile);
+            File.WriteAllText(box.Paths.ClaudeConfigFile,
+                new JsonObject { ["oauthAccount"] = new JsonObject { ["accountUuid"] = "uuid-" + who, ["emailAddress"] = who + "@example.com" } }.ToJsonString());
+        }
+
+        SignIn("alice");
+        var alice = code.Sync(state)!;
+        SignIn("bob");
+        code.Sync(state);
+
+        code.Switch(state, alice.Id);
+
+        Assert.Equal("refresh-alice", store.Value!["claudeAiOauth"]!["refreshToken"]!.ToString());
+        Assert.Equal("keep-me", store.Value["mcpOAuth"]!.ToString());
+        Assert.False(File.Exists(box.Paths.ClaudeCredentialsFile));
+        Assert.Equal("uuid-alice", FileUtil.ReadJsonObject(box.Paths.ClaudeConfigFile)!["oauthAccount"]!["accountUuid"]!.ToString());
+    }
+
+    [Fact]
+    public void Shared_sessions_swap_the_top_level_cookie_jar_used_by_macOS()
+    {
+        using var box = new Sandbox();
+        void SignIn(string who)
+        {
+            Directory.CreateDirectory(box.Live);
+            File.WriteAllText(Path.Combine(box.Live, "Cookies"), who);
+            File.WriteAllText(Path.Combine(box.Live, "Cookies-journal"), who + "-journal");
+            File.WriteAllText(Path.Combine(box.Live, "config.json"),
+                new JsonObject { ["locale"] = "en-US", ["oauth:tokenCache"] = "token-" + who, ["lastKnownAccountUuid"] = "acc-" + who }.ToJsonString());
+        }
+
+        SignIn("alice");
+        var state = new AppState();
+        var desktop = new DesktopSwitcher(box.Paths, box.Host);
+        var bob = desktop.AddNew(state, "Bob", copySettings: false);
+        var alice = state.Profiles.Single(p => p != bob);
+
+        Assert.False(File.Exists(Path.Combine(box.Live, "Cookies")));
+        Assert.Equal("alice", File.ReadAllText(Path.Combine(box.Paths.DesktopStore, alice.Id, "Cookies")));
+
+        SignIn("bob");
+        desktop.Switch(state, alice.Id);
+
+        Assert.Equal("alice", File.ReadAllText(Path.Combine(box.Live, "Cookies")));
+        Assert.Equal("alice-journal", File.ReadAllText(Path.Combine(box.Live, "Cookies-journal")));
+        Assert.Equal("bob", File.ReadAllText(Path.Combine(box.Paths.DesktopStore, bob.Id, "Cookies")));
+        Assert.Equal("token-alice", FileUtil.ReadJsonObject(Path.Combine(box.Live, "config.json"))!["oauth:tokenCache"]!.ToString());
+    }
+
+    [Fact]
+    public void Mac_host_finds_the_data_folder_under_application_support()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        using var box = new Sandbox();
+        var data = Path.Combine(box.Paths.Local, "Claude");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, "config.json"), "{}");
+
+        var install = new MacDesktopHost(box.Paths).Detect();
+
+        Assert.NotNull(install);
+        Assert.Equal(data, install!.DataDir);
+        Assert.False(string.IsNullOrEmpty(install.Aumid));
+    }
+
+    [Fact]
+    public void Mac_keychain_round_trips_a_value_without_touching_real_items()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        var service = "AccountDeck-test-" + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            Assert.Null(MacKeychain.Read(service, "test"));
+            var json = "{\"claudeAiOauth\":{\"accessToken\":\"a \\\"quoted\\\" value\"}}";
+            MacKeychain.Write(service, "test", json);
+            Assert.Equal(json, MacKeychain.Read(service, "test"));
+            MacKeychain.Write(service, "test", "second");
+            Assert.Equal("second", MacKeychain.Read(service, "test"));
+        }
+        finally
+        {
+            MacKeychain.Delete(service, "test");
+        }
+        Assert.Null(MacKeychain.Read(service, "test"));
     }
 }

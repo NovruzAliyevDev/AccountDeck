@@ -21,14 +21,15 @@ public sealed class DeckService
     /// <summary>Raised when something worth a notification happened: title, text.</summary>
     public event Action<string, string>? Notify;
 
-    public DeckService(AppPaths paths, IDesktopHost host, ISecretProtector protector, HttpClient http)
+    /// <param name="claudeCredentials">Where Claude Code keeps its tokens; null means ~/.claude/.credentials.json (Windows, Linux, tests).</param>
+    public DeckService(AppPaths paths, IDesktopHost host, ISecretProtector protector, HttpClient http, ICredentialStore? claudeCredentials = null)
     {
         Paths = paths;
         _store = new StateStore(paths);
         _api = new ClaudeApi(http);
         State = _store.Load();
         Desktop = new DesktopSwitcher(paths, host);
-        ClaudeCode = new ClaudeCodeSwitcher(paths, protector);
+        ClaudeCode = new ClaudeCodeSwitcher(paths, protector, claudeCredentials);
         Codex = new CodexSwitcher(paths, protector);
     }
 

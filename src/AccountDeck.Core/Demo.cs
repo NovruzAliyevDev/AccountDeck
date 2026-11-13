@@ -1,18 +1,15 @@
-using System.IO;
 using System.Net;
-using System.Net.Http;
 using System.Text.Json.Nodes;
-using AccountDeck.Core;
 
-namespace AccountDeck.App;
+namespace AccountDeck.Core;
 
 /// <summary>
-/// "AccountDeck.exe --demo": the full app on sample accounts in a temporary folder.
+/// "AccountDeck --demo": the full app on sample accounts in a temporary folder.
 /// It never looks at real sign-ins, never closes the real Claude Desktop and never goes online.
 /// </summary>
 public static class Demo
 {
-    public static (AppPaths, IDesktopHost, HttpClient) Create()
+    public static (AppPaths, IDesktopHost, HttpClient) Create(ISecretProtector protector)
     {
         var root = Path.Combine(Path.GetTempPath(), "AccountDeck-demo");
         if (Directory.Exists(root)) Directory.Delete(root, true);
@@ -21,7 +18,7 @@ public static class Demo
         var state = new AppState { Settings = { ShareDesktopSessions = false } };
 
         // Two Claude Code sign-ins, saved the same way a real one would be.
-        var code = new ClaudeCodeSwitcher(paths, new DpapiProtector());
+        var code = new ClaudeCodeSwitcher(paths, protector);
         foreach (var who in new[] { "personal", "work" })
         {
             Directory.CreateDirectory(paths.ClaudeDir);

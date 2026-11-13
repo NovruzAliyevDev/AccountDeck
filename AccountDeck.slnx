@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/AccountDeck.App/AccountDeck.App.csproj" />
     <Project Path="src/AccountDeck.Core/AccountDeck.Core.csproj" />
+    <Project Path="src/AccountDeck.Mac/AccountDeck.Mac.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AccountDeck.Tests/AccountDeck.Tests.csproj" />

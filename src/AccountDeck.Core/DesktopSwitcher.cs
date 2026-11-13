@@ -195,7 +195,7 @@ public sealed partial class DesktopSwitcher(AppPaths paths, IDesktopHost host)
     private void Swap(AppState state, DesktopInstall install, Profile? current, Action bringIn, Profile target)
     {
         if (!host.Close(install, TimeSpan.FromSeconds(20)))
-            throw new DeckException("Claude Desktop did not close. Quit it from its tray icon and try again.");
+            throw new DeckException("Claude Desktop did not close. Quit it from its tray or menu bar icon and try again.");
 
         var live = install.DataDir;
         var parkedCurrent = false;

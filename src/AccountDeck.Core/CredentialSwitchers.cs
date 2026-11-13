@@ -69,16 +69,23 @@ public abstract class CredentialSwitcher(AccountKind kind, ISecretProtector prot
 }
 
 /// <summary>
-/// Claude Code keeps tokens in ~/.claude/.credentials.json ("claudeAiOauth") and the account
-/// description in ~/.claude.json ("oauthAccount"). Everything else in those files is left untouched.
+/// Claude Code keeps tokens in ~/.claude/.credentials.json ("claudeAiOauth") on Windows and Linux, and in the
+/// login Keychain on macOS (see <see cref="ICredentialStore"/>). The account description lives in ~/.claude.json
+/// ("oauthAccount"). Everything else in those places is left untouched.
 /// </summary>
-public sealed class ClaudeCodeSwitcher(AppPaths paths, ISecretProtector protector) : CredentialSwitcher(AccountKind.ClaudeCode, protector)
+public sealed class ClaudeCodeSwitcher(AppPaths paths, ISecretProtector protector, ICredentialStore? store = null)
+    : CredentialSwitcher(AccountKind.ClaudeCode, protector)
 {
+    private readonly ICredentialStore _store = store ?? new FileCredentialStore(paths.ClaudeCredentialsFile);
+
+    /// <summary>Where the tokens are read from and written to, for the --diagnose report.</summary>
+    public string CredentialLocation => _store.Describe;
+
     public override bool IsInstalled => Directory.Exists(paths.ClaudeDir) || File.Exists(paths.ClaudeConfigFile);
 
     public override LiveLogin? ReadLive()
     {
-        if (FileUtil.ReadJsonObject(paths.ClaudeCredentialsFile)?["claudeAiOauth"] is not JsonObject oauth) return null;
+        if (_store.Read()?["claudeAiOauth"] is not JsonObject oauth) return null;
         if (string.IsNullOrEmpty(oauth["refreshToken"]?.ToString()) && string.IsNullOrEmpty(oauth["accessToken"]?.ToString())) return null;
         var account = FileUtil.ReadJsonObject(paths.ClaudeConfigFile)?["oauthAccount"] as JsonObject;
         var secret = new JsonObject { ["oauth"] = oauth.DeepClone(), ["account"] = account?.DeepClone() };
@@ -93,9 +100,9 @@ public sealed class ClaudeCodeSwitcher(AppPaths paths, ISecretProtector protecto
     {
         var saved = JsonNode.Parse(secret)!.AsObject();
 
-        var credentials = FileUtil.ReadJsonObject(paths.ClaudeCredentialsFile) ?? new JsonObject();
+        var credentials = _store.Read() ?? new JsonObject();
         credentials["claudeAiOauth"] = saved["oauth"]!.DeepClone();
-        FileUtil.WriteAtomic(paths.ClaudeCredentialsFile, credentials.ToJsonString(FileUtil.Pretty));
+        _store.Write(credentials);
 
         if (saved["account"] is JsonObject account)
         {

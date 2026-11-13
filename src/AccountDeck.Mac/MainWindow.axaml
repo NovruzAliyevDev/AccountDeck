@@ -1,0 +1,165 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AccountDeck.Mac.MainWindow"
+        Title="Account Deck" Width="900" Height="760" MinWidth="700" MinHeight="480"
+        Background="{DynamicResource PageBrush}"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid Margin="24,18,24,18" RowDefinitions="Auto,*">
+            <DockPanel Margin="0,0,0,14">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Spacing="12">
+                    <TextBlock Text="{Binding LastChecked}" Classes="muted" VerticalAlignment="Center" />
+                    <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip.Tip="Look for new sign-ins and update usage now" />
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock Text="Account Deck" FontSize="26" FontWeight="SemiBold" />
+                    <TextBlock Text="Switch between your accounts and keep an eye on their limits." Classes="muted" />
+                </StackPanel>
+            </DockPanel>
+
+            <TabControl Grid.Row="1" Padding="0">
+                <TabItem Header="Accounts">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
+                        <StackPanel Margin="4,12,4,4">
+                            <Border Classes="card" Margin="0,0,0,16" IsVisible="{Binding IsDemo}">
+                                <TextBlock TextWrapping="Wrap" Text="Demo mode: these are sample accounts in a temporary folder. Nothing here touches your real Claude or Codex sign-ins." />
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding Sections}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,0,24">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="Add account" Command="{Binding Add}" IsVisible="{Binding CanAdd}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                    <Border Classes="pill">
+                                                        <TextBlock Text="{Binding Status}" FontSize="12" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Hint}" Classes="muted" Margin="0,6,0,0" IsVisible="{Binding HasHint}" />
+                                            <ItemsControl ItemsSource="{Binding Profiles}" Margin="0,10,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Classes="card" Margin="0,0,0,8">
+                                                            <Grid ColumnDefinitions="240,*,252">
+                                                                <StackPanel VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                                                                    <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="12" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                                                               IsVisible="{Binding HasDetail}" />
+                                                                    <Border Classes="pill" Background="#2F8F6B" HorizontalAlignment="Left" Margin="0,6,0,0" IsVisible="{Binding IsActive}">
+                                                                        <TextBlock Text="In use now" FontSize="12" Foreground="White" />
+                                                                    </Border>
+                                                                </StackPanel>
+
+                                                                <StackPanel Grid.Column="1" Margin="20,0" VerticalAlignment="Center">
+                                                                    <ItemsControl ItemsSource="{Binding Bars}">
+                                                                        <ItemsControl.ItemTemplate>
+                                                                            <DataTemplate>
+                                                                                <StackPanel Margin="0,2,0,6">
+                                                                                    <DockPanel>
+                                                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding Text}" FontSize="12" />
+                                                                                        <TextBlock Text="{Binding Label}" FontSize="12" Classes="muted" />
+                                                                                    </DockPanel>
+                                                                                    <ProgressBar Value="{Binding Percent, Mode=OneWay}" Maximum="100" Height="6" MinHeight="6" Margin="0,4,0,0"
+                                                                                                 Foreground="{Binding Brush}" />
+                                                                                </StackPanel>
+                                                                            </DataTemplate>
+                                                                        </ItemsControl.ItemTemplate>
+                                                                    </ItemsControl>
+                                                                    <TextBlock Text="{Binding Note}" Classes="muted" FontSize="12" IsVisible="{Binding HasNote}" />
+                                                                </StackPanel>
+
+                                                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                                    <Button Content="Switch" Command="{Binding Switch}" Classes="accent" MinWidth="76"
+                                                                            HorizontalContentAlignment="Center" IsVisible="{Binding CanSwitch}" />
+                                                                    <Button Content="Rename" Command="{Binding Rename}" />
+                                                                    <Button Content="Remove" Command="{Binding Remove}" IsVisible="{Binding CanSwitch}" />
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <TabItem Header="Activity">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,12,4,4">
+                            <TextBlock Text="Everything this app has done, newest first." Classes="muted" Margin="0,0,0,10" />
+                            <ItemsControl ItemsSource="{Binding Log}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnDefinitions="110,*" Margin="0,0,0,8">
+                                            <TextBlock Text="{Binding Time}" Classes="muted" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap" Classes.error="{Binding IsError}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <TabItem Header="Settings">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="General" Classes="h2" Margin="0,0,0,8" />
+                            <CheckBox Content="Start Account Deck when I log in to this Mac" IsChecked="{Binding StartAtLogin}" />
+                            <CheckBox Content="Keep running in the menu bar when I close the window" IsChecked="{Binding CloseToTray}" Margin="0,4,0,0" />
+
+                            <TextBlock Text="Claude Desktop" Classes="h2" />
+                            <CheckBox Content="Share sessions between accounts" IsChecked="{Binding ShareDesktopSessions}" />
+                            <TextBlock Classes="hint"
+                                       Text="On: all accounts use the same Claude Desktop data, so your Code sessions, settings and files are there whichever account is signed in. Only the sign-in is swapped. Off: every account gets its own separate copy of everything. An account added in one mode can only be switched to in that mode." />
+
+                            <TextBlock Text="Usage" Classes="h2" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="Check usage every" VerticalAlignment="Center" />
+                                <ComboBox ItemsSource="{Binding RefreshChoices}" SelectedItem="{Binding RefreshMinutes}" MinWidth="70" />
+                                <TextBlock Text="minutes" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <CheckBox Content="Keep sign-ins fresh" IsChecked="{Binding KeepSignInsFresh}" Margin="0,8,0,0" />
+                            <TextBlock Classes="hint"
+                                       Text="Claude Code sign-ins expire after a few hours. With this on, Account Deck renews them so it can show usage for every saved account, including the ones you are not using right now." />
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0">
+                                <CheckBox Content="Tell me when the Claude Code account in use reaches" IsChecked="{Binding NotifyOnHighUsage}" />
+                                <ComboBox ItemsSource="{Binding ThresholdChoices}" SelectedItem="{Binding NotifyThreshold}" MinWidth="70" />
+                                <TextBlock Text="% of a limit" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <TextBlock Text="Automatic switching" Classes="h2" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <CheckBox Content="Switch Claude Code to another account when it reaches" IsChecked="{Binding AutoSwitchClaudeCode}" />
+                                <ComboBox ItemsSource="{Binding ThresholdChoices}" SelectedItem="{Binding AutoSwitchThreshold}" MinWidth="70" />
+                                <TextBlock Text="% of a limit" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <TextBlock Classes="hint"
+                                       Text="Picks the saved account with the most room left. Claude Code sessions that are already open keep their account until you restart them. Claude Desktop is never switched automatically, because switching it closes the app." />
+
+                            <TextBlock Text="Data" Classes="h2" />
+                            <TextBlock Classes="muted" Margin="0,0,0,8"
+                                       Text="Saved accounts stay on this Mac. Sign-ins are encrypted with a key kept in your macOS Keychain, and parked Claude Desktop accounts are kept as folders." />
+                            <Button Content="Open data folder" Command="{Binding OpenDataFolderCommand}" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+        </Grid>
+
+        <Border Background="{DynamicResource ScrimBrush}" IsVisible="{Binding IsBusy}">
+            <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28,22" Width="380">
+                <StackPanel>
+                    <TextBlock Text="{Binding BusyText}" FontSize="15" FontWeight="SemiBold" />
+                    <ProgressBar IsIndeterminate="True" Height="4" MinHeight="4" Margin="0,14,0,0" />
+                </StackPanel>
+            </Border>
+        </Border>
+    </Grid>
+</Window>

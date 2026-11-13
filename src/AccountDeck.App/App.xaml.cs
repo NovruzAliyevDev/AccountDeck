@@ -57,7 +57,7 @@ public partial class App : Application
         DeckService service;
         if (demo)
         {
-            var (paths, host, http) = Demo.Create();
+            var (paths, host, http) = Demo.Create(new DpapiProtector());
             service = new DeckService(paths, host, new DpapiProtector(), http);
         }
         else

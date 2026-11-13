@@ -6,6 +6,7 @@ using Microsoft.VisualBasic.FileIO;
 namespace AccountDeck.Core;
 
 /// <summary>Finds, closes and starts the real Claude Desktop on Windows.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class WindowsDesktopHost(AppPaths paths) : IDesktopHost
 {
     public DesktopInstall? Detect()
