@@ -7,6 +7,8 @@
     <LangVersion>latest</LangVersion>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Lets the whole solution build on macOS too; this project still only runs on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>AccountDeck</AssemblyName>
     <RootNamespace>AccountDeck.App</RootNamespace>
     <Version>1.0.0</Version>

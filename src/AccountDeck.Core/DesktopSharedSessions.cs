@@ -15,7 +15,11 @@ public sealed partial class DesktopSwitcher
 
     /// <summary>Everything in the data folder that says who is signed in on the web side.</summary>
     private static readonly string[] SignInItems =
-        ["Network", "Local Storage", "Session Storage", "IndexedDB", "WebStorage", "SharedStorage", "SharedStorage-wal"];
+        [
+            "Network", "Local Storage", "Session Storage", "IndexedDB", "WebStorage", "SharedStorage", "SharedStorage-wal",
+            // macOS builds keep the cookie jar at the top of the data folder instead of under Network.
+            "Cookies", "Cookies-journal",
+        ];
 
     private static bool IsSignInKey(string key) => key.StartsWith("oauth:", StringComparison.Ordinal) || key == "lastKnownAccountUuid";
 
@@ -23,7 +27,7 @@ public sealed partial class DesktopSwitcher
     private void SwapSignIn(AppState state, DesktopInstall install, Profile? current, Profile target, bool restore)
     {
         if (!host.Close(install, TimeSpan.FromSeconds(20)))
-            throw new DeckException("Claude Desktop did not close. Quit it from its tray icon and try again.");
+            throw new DeckException("Claude Desktop did not close. Quit it from its tray or menu bar icon and try again.");
 
         var live = install.DataDir;
         Directory.CreateDirectory(live);
@@ -38,18 +42,21 @@ public sealed partial class DesktopSwitcher
         catch
         {
             // Put back whatever already moved, in reverse order. Best effort: the original error is what matters.
-            try
-            {
-                if (restoring && restore) ParkSignIn(live, Parked(target.Id), target);
-                if (current is not null) RestoreSignIn(Parked(current.Id), live);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or DeckException) { }
+            // Each step is tried on its own, so a failure in the first never stops the current sign-in coming back.
+            if (restoring && restore) BestEffort(() => ParkSignIn(live, Parked(target.Id), target));
+            if (current is not null) BestEffort(() => RestoreSignIn(Parked(current.Id), live));
             throw;
         }
 
         state.ActiveIds[AccountKind.Desktop] = target.Id;
         target.LastUsedAt = DateTimeOffset.Now;
         SyncSessions(state, live);
+    }
+
+    private static void BestEffort(Action undo)
+    {
+        try { undo(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or DeckException) { }
     }
 
     private static void ParkSignIn(string live, string dir, Profile profile)

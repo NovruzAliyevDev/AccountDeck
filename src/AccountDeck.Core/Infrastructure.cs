@@ -13,6 +13,7 @@ public interface ISecretProtector
 }
 
 /// <summary>Encrypts saved sign-ins with Windows DPAPI, so only this Windows user can read them.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class DpapiProtector : ISecretProtector
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("AccountDeck.v1");

@@ -1,7 +1,8 @@
 # Account Deck
 
-Switch between several accounts in **Claude Desktop**, **Claude Code** and **Codex** on Windows,
-and watch how much of each account's plan limit is used, from one window and a tray icon.
+Switch between several accounts in **Claude Desktop**, **Claude Code** and **Codex** on Windows
+and macOS, and watch how much of each account's plan limit is used, from one window and a tray
+(menu bar) icon.
 
 ## Install
 
@@ -19,6 +20,21 @@ To try the app on sample accounts without touching anything real:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\AccountDeck\AccountDeck.exe" --demo
+```
+
+### macOS
+
+1. Download **AccountDeck-mac.zip** from the latest release, or build it yourself with
+   `./build-mac.sh` (needs the [.NET 10 SDK](https://dotnet.microsoft.com/download)).
+2. Unzip it and drag **Account Deck** into Applications (or run `./build-mac.sh --install`).
+3. The app is not notarized, so the first time, right-click it and choose **Open**
+   (or System Settings > Privacy & Security > **Open Anyway**).
+
+Account Deck lives in the menu bar; closing its window keeps it running there. To try it on sample
+accounts without touching anything real:
+
+```bash
+open -n "/Applications/Account Deck.app" --args --demo
 ```
 
 ## Using it
@@ -60,6 +76,8 @@ the account with the most room left.
 | Claude Desktop (Microsoft Store), separate | same folder | Close Claude, rename the whole folder into `desktop-profiles\<id>`, rename the chosen profile folder into its place, start Claude. |
 | Claude Desktop (classic installer) | `%APPDATA%\Claude` | The same, with that folder. |
 | Claude Code | `claudeAiOauth` in `~\.claude\.credentials.json`, `oauthAccount` in `~\.claude.json` | Rewrite only those two entries; everything else in the files is kept. |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude` | The same as on Windows. Claude is asked to quit, then it and everything it started are ended. The sign-in pieces also include the top-level `Cookies` file. |
+| Claude Code (macOS) | `claudeAiOauth` in the login Keychain item `Claude Code-credentials`, `oauthAccount` in `~/.claude.json` | Rewrite only those entries, through `/usr/bin/security`. |
 | Codex | `~\.codex\auth.json` (or `%CODEX_HOME%`) | Replace the file. |
 
 The Store build is the reason this project exists: it keeps its data in `Claude-Data`, not in
@@ -76,24 +94,37 @@ Safety measures:
   servers) are closed, because any of them can hold the folder open. Nothing is moved if they do
   not close.
 - Saved Claude Code and Codex sign-ins are encrypted with Windows DPAPI for your Windows user and
-  stored in `%LOCALAPPDATA%\AccountDeck\state.json`. Tokens are only ever sent to Anthropic's own
+  stored in `%LOCALAPPDATA%\AccountDeck\state.json`. On macOS they are encrypted with AES-GCM using
+  a random key kept in your login Keychain (item `AccountDeck`), and stored in
+  `~/Library/Application Support/AccountDeck/state.json`. A removed Claude Desktop account goes to the Trash. Tokens are only ever sent to Anthropic's own
   endpoints (`api.anthropic.com` for usage, `platform.claude.com` to renew an expired sign-in).
 
-`AccountDeck.exe --diagnose` writes a read-only report of what the app detects on this PC.
+`AccountDeck.exe --diagnose` writes a read-only report of what the app detects on this PC. On macOS:
+`"/Applications/Account Deck.app/Contents/MacOS/AccountDeck" --diagnose`.
 
 ## Development
 
 ```
-src/AccountDeck.Core    switching logic, no UI
-src/AccountDeck.App     WPF window + tray icon
-tests/AccountDeck.Tests xUnit tests that run every switch on temporary folders
+src/AccountDeck.Core    switching logic, no UI (net10.0; Windows and macOS hosts)
+src/AccountDeck.App     Windows: WPF window + tray icon
+src/AccountDeck.Mac     macOS: Avalonia window + menu bar icon
+tests/AccountDeck.Tests xUnit tests that run every switch on temporary folders (run on Windows and macOS)
 ```
 
 ```powershell
 dotnet test tests\AccountDeck.Tests --artifacts-path "$env:TEMP\AccountDeck-build"
 dotnet run --project src\AccountDeck.App --artifacts-path "$env:TEMP\AccountDeck-build" -- --demo
 .\install.ps1    # build from source and install (needs the .NET 10 SDK)
-.elease.ps1    # run the tests and build dist\AccountDeck-Setup.exe
+.\release.ps1    # run the tests and build dist\AccountDeck-Setup.exe
+```
+
+On macOS:
+
+```bash
+dotnet test tests/AccountDeck.Tests
+dotnet run --project src/AccountDeck.Mac -- --demo
+./build-mac.sh             # run the tests and build dist/Account Deck.app and dist/AccountDeck-mac.zip
+./build-mac.sh --install   # same, then copy it to ~/Applications and open it
 ```
 
 The setup file is the app itself, published as one self-contained file. Started under a name
