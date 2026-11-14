@@ -80,11 +80,7 @@ public sealed class DeckService
             Spaces.Switch(State, target.Id);
             try
             {
-                if (target.DesktopProfileId is { } d && State.Find(d) is not null && State.ActiveIds.GetValueOrDefault(AccountKind.Desktop) != d)
-                    Desktop.Switch(State, d, relaunch: false);
-                // Written after the swap, so a per-space ~/.claude.json gets this space's account.
-                if (target.ClaudeCodeProfileId is { } c && State.Find(c) is not null)
-                    ClaudeCode.Switch(State, c, syncFirst: false);
+                UseSignIns(target);
             }
             catch when (from is not null)
             {
@@ -92,10 +88,37 @@ public sealed class DeckService
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or DeckException) { }
                 throw;
             }
+            FileSidebarBySpace();
         });
         Log($"Switched to the space \"{target.Name}\"" + (from is null ? "." : $" (was \"{from.Name}\")."));
         return Task.CompletedTask;
     });
+
+    /// <summary>Signs Claude Desktop and Claude Code in to the accounts of <paramref name="space"/>. Claude must be closed.</summary>
+    private void UseSignIns(Space space)
+    {
+        if (space.DesktopProfileId is { } d && State.Find(d) is not null && State.ActiveIds.GetValueOrDefault(AccountKind.Desktop) != d)
+            Desktop.Switch(State, d, relaunch: false);
+        // Written after the swap, so a per-space ~/.claude.json gets this space's account.
+        if (space.ClaudeCodeProfileId is { } c && State.Find(c) is not null)
+            ClaudeCode.Switch(State, c, syncFirst: false);
+    }
+
+    /// <summary>Each space's Claude Desktop account lists only that space's conversations. A failure only leaves extra entries, so it is logged, not thrown.</summary>
+    private void FileSidebarBySpace()
+    {
+        try
+        {
+            var hidden = Desktop.FileSessionsBySpace(State, SpaceItems.SessionOwners(Paths, State.Spaces));
+            var listed = Desktop.ListOwnConversations(State, SpaceItems.SessionOwners(Paths, State.Spaces));
+            if (hidden + listed > 0)
+                Log($"Claude Desktop's list now shows each space's own conversations ({listed} added, {hidden} of the other space set aside).");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log($"Claude Desktop's list could not be sorted by space: {e.Message}", error: true);
+        }
+    }
 
     /// <summary>Runs the first-time split of ~/.claude into spaces. Returns the backup folder.</summary>
     public async Task<string> SetUpSpacesAsync(SpaceSetupPlan plan)
@@ -103,9 +126,20 @@ public sealed class DeckService
         var backup = "";
         await RunAsync(() =>
         {
-            WithClaudeClosed(relaunch: false, work: () => backup = Spaces.SetUp(State, plan));
+            string? signInError = null;
+            WithClaudeClosed(relaunch: false, work: () =>
+            {
+                ClaudeCode.Sync(State);
+                backup = Spaces.SetUp(State, plan);
+                // The space in use must also be signed in with its own accounts, as after a switch.
+                try { UseSignIns(State.Spaces.Active!); }
+                catch (DeckException e) { signInError = e.Message; }
+                FileSidebarBySpace();
+            });
             var live = State.Spaces.Active!;
             Log($"Spaces are set up. \"{live.Name}\" is in use now. Files that were rewritten are backed up in {backup}.");
+            if (signInError is not null)
+                Log($"The accounts of \"{live.Name}\" could not be signed in: {signInError} Switch them on the Accounts tab.", error: true);
             return Task.CompletedTask;
         });
         return backup;
@@ -195,6 +229,36 @@ public sealed class DeckService
         return found;
     }
 
+    /// <summary>
+    /// Puts conversations back in Claude Desktop's sidebar. Claude Desktop reads its list only when it starts, so it is
+    /// closed while this happens and started again if it was open. Returns how many were put back.
+    /// </summary>
+    public async Task<int> ShowInDesktopAsync(IReadOnlyCollection<string> sessionIds)
+    {
+        var shown = 0;
+        await RunAsync(() =>
+        {
+            Desktop.Reconcile(State);
+            var install = Desktop.Install ?? throw new DeckException("Claude Desktop was not found on this computer.");
+            var wasRunning = _host.IsRunning(install);
+            if (!_host.Close(install, TimeSpan.FromSeconds(20)))
+                throw new DeckException("Claude Desktop did not close. Quit it from its tray or menu bar icon and try again.");
+            try
+            {
+                shown = Desktop.ShowInSidebar(State, sessionIds, SpaceItems.SessionOwners(Paths, State.Spaces));
+            }
+            finally
+            {
+                if (wasRunning) _host.Launch(install);
+            }
+            Log(shown == sessionIds.Count
+                ? $"Put {shown} conversation(s) back in Claude Desktop's list."
+                : $"Put {shown} of {sessionIds.Count} conversation(s) back in Claude Desktop's list. The others could not be added: their transcript or folder is missing, or Claude Desktop has no account signed in for their space.");
+            return Task.CompletedTask;
+        });
+        return shown;
+    }
+
     /// <summary>Puts a project folder in another group (null: back to the suggested one).</summary>
     public Task SetProjectGroupAsync(IEnumerable<string> projectPaths, string? group) => RunAsync(() =>
     {
@@ -219,7 +283,11 @@ public sealed class DeckService
         var leftovers = new List<string>();
         await RunAsync(() =>
         {
-            WithClaudeClosed(relaunch: false, work: () => leftovers = Spaces.TurnOff(State));
+            WithClaudeClosed(relaunch: false, work: () =>
+            {
+                leftovers = Spaces.TurnOff(State);
+                Desktop.RestoreHiddenSessions(State);
+            });
             Log(leftovers.Count == 0
                 ? "Spaces are turned off. All conversations are back together."
                 : $"Spaces are turned off. {leftovers.Count} item(s) would have overwritten something and stay in {Paths.SpacesStore}.");

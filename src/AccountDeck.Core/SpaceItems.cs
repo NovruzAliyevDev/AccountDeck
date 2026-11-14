@@ -218,6 +218,18 @@ public static partial class SpaceItems
         spaceId == s.ActiveId ? paths.ClaudeDir : Path.Combine(paths.SpacesStore, spaceId);
 
     /// <summary>Every conversation of every space, newest first, with the project folder it belongs to.</summary>
+    /// <summary>Which space each conversation (session id) is in, read from file names only.</summary>
+    public static Dictionary<string, string> SessionOwners(AppPaths paths, SpaceSettings s)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!s.Enabled) return owners;
+        foreach (var (space, root) in Roots(paths, s))
+        foreach (var dir in Dirs(Path.Combine(root, "projects")))
+        foreach (var file in Directory.GetFiles(dir, "*.jsonl"))
+            owners[Path.GetFileNameWithoutExtension(file)] = space.Id;
+        return owners;
+    }
+
     public static List<(Space Space, ProjectInfo Project, ConversationInfo Conversation)> AllConversations(AppPaths paths, SpaceSettings s)
     {
         var all = new List<(Space, ProjectInfo, ConversationInfo)>();

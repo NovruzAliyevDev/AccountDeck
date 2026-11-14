@@ -246,6 +246,30 @@ public class SpacesTests
     }
 
     [Fact]
+    public void A_held_folder_stops_the_switch_names_the_folder_and_leaves_no_journal()
+    {
+        if (!OperatingSystem.IsWindows()) return; // only Windows refuses to rename a folder with an open file in it
+        var (box, c) = Seed();
+        using var _box = box;
+        var state = new AppState();
+        var (work, personal, plan) = WorkAndPersonal(box, state);
+        var spaces = new SpaceSwitcher(box.Paths);
+        spaces.SetUp(state, plan);
+
+        var held = Path.Combine(c, "file-history");
+        DeckException e;
+        using (File.Open(Path.Combine(held, "s-work", "abc@v1"), FileMode.Open, FileAccess.Read, FileShare.None))
+            e = Assert.Throws<DeckException>(() => spaces.Switch(state, personal.Id));
+
+        Assert.Contains(held, e.Message);
+        Assert.Contains($"({Environment.ProcessId})", e.Message);          // the program holding it is named
+        Assert.Equal(work.Id, state.Spaces.ActiveId);
+        Assert.True(Has(c, "projects"));                                   // what moved first came back
+        Assert.True(Has(c, "file-history/s-work/abc@v1"));
+        Assert.False(File.Exists(box.Paths.SpaceJournal));                 // nothing left to undo on the next start
+    }
+
+    [Fact]
     public void An_interrupted_switch_is_undone_on_the_next_start()
     {
         var (box, c) = Seed();
@@ -369,6 +393,38 @@ public class SpacesTests
 
         // Switching a single account of the other space is refused.
         await Assert.ThrowsAsync<DeckException>(() => service.SwitchAsync(bobDesktop.Id));
+    }
+
+    [Fact]
+    public async Task Setting_up_signs_in_the_accounts_of_the_space_in_use()
+    {
+        var (box, c) = Seed();
+        using var _box = box;
+        box.SeedLive("alice");
+        ClaudeCodeTests.SignIn(box, "alice");
+        var service = new DeckService(box.Paths, box.Host, new PlainProtector(), new HttpClient());
+        await service.ReloadAsync();
+        var aliceCode = service.State.Active(AccountKind.ClaudeCode)!;
+        var aliceDesktop = service.State.Active(AccountKind.Desktop)!;
+        service.State.Settings.ShareDesktopSessions = false;
+        await service.AddDesktopAsync("Bob", copySettings: false);
+        box.SeedLive("bob");
+        ClaudeCodeTests.SignIn(box, "bob");
+        await service.ReloadAsync();
+        var bobCode = service.State.Active(AccountKind.ClaudeCode)!;
+        var bobDesktop = service.State.Active(AccountKind.Desktop)!;
+
+        // Bob is signed in everywhere, but Work, whose accounts are Alice's, is the space kept in use.
+        var (work, personal, plan) = WorkAndPersonal(box, service.State);
+        work.DesktopProfileId = aliceDesktop.Id; work.ClaudeCodeProfileId = aliceCode.Id;
+        personal.DesktopProfileId = bobDesktop.Id; personal.ClaudeCodeProfileId = bobCode.Id;
+        await service.SetUpSpacesAsync(plan);
+
+        Assert.Equal("alice", box.LiveCookies);
+        Assert.Equal("refresh-alice", FileUtil.ReadJsonObject(box.Paths.ClaudeCredentialsFile)!["claudeAiOauth"]!["refreshToken"]!.ToString());
+        Assert.True(service.State.IsActive(aliceCode));
+        Assert.True(service.State.IsActive(aliceDesktop));
+        Assert.DoesNotContain(service.State.Log, l => l.IsError);
     }
 
     [Fact]

@@ -22,11 +22,16 @@
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <DockPanel Margin="0,0,0,8">
+                    <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="This list shows every conversation saved on this PC. Claude Desktop's sidebar shows fewer: only the ones started in Claude Desktop under the account signed in there. Removing a conversation in Claude Desktop only hides it from that list; the conversation stays here and you can still continue it with Resume. Deleting it here removes it for real (it goes to the Recycle Bin)." />
+                    <DockPanel Grid.Row="1" Margin="0,0,0,8">
                         <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding Sorts}" SelectedItem="{Binding Sort}" MinWidth="130" Margin="8,0,0,0" />
+                        <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding DesktopFilters}" SelectedItem="{Binding DesktopFilter}" MinWidth="170" Margin="8,0,0,0"
+                                  ToolTip="How Claude Desktop's sidebar shows it" />
                         <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding GroupFilters}" SelectedItem="{Binding GroupFilter}" MinWidth="140" Margin="8,0,0,0"
                                   ToolTip="Project" />
                         <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding SpaceFilters}" SelectedItem="{Binding SpaceFilter}" MinWidth="120" Margin="8,0,0,0"
@@ -35,7 +40,7 @@
                                  ToolTip="Search by title, first prompt, folder, project or space" />
                     </DockPanel>
 
-                    <ListBox Grid.Row="1" ItemsSource="{Binding Rows}" HorizontalContentAlignment="Stretch"
+                    <ListBox Grid.Row="2" ItemsSource="{Binding Rows}" HorizontalContentAlignment="Stretch"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -58,6 +63,10 @@
                                             <Border Style="{StaticResource Pill}" Background="#3A5A8C" Margin="0,0,8,0">
                                                 <TextBlock Text="{Binding Group}" FontSize="12" Foreground="White" />
                                             </Border>
+                                            <Border Style="{StaticResource Pill}" Background="#6B5A2A" Margin="0,0,8,0" ToolTip="{Binding DesktopTip}"
+                                                    ToolTipService.ShowDuration="60000" Visibility="{Binding HasDesktopNote, Converter={StaticResource Show}}">
+                                                <TextBlock Text="{Binding DesktopNote}" FontSize="12" Foreground="White" />
+                                            </Border>
                                             <TextBlock Text="{Binding Date}" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" />
                                         </StackPanel>
                                         <TextBlock Text="{Binding Text}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" ToolTip="{Binding Text}" />
@@ -70,8 +79,9 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <DockPanel Grid.Row="2" Margin="0,8,0,0">
+                    <DockPanel Grid.Row="3" Margin="0,8,0,0">
                         <Button DockPanel.Dock="Right" Content="Delete selected…" Command="{Binding DeleteCommand}" IsEnabled="{Binding HasSelection}" Margin="8,0,0,0" />
+                        <Button DockPanel.Dock="Right" Content="Show selected in Claude Desktop…" Command="{Binding ShowSelectedCommand}" IsEnabled="{Binding HasSelection}" Margin="8,0,0,0" />
                         <Button DockPanel.Dock="Right" Content="Clear" Command="{Binding ClearCommand}" IsEnabled="{Binding HasSelection}" Margin="8,0,0,0" />
                         <Button DockPanel.Dock="Right" Content="Tick all shown" Command="{Binding SelectShownCommand}" />
                         <StackPanel VerticalAlignment="Center">

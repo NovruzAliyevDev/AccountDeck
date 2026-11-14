@@ -20,6 +20,12 @@ public sealed class ConversationRowVM : Bindable
     public required string Detail { get; init; }
     public List<MoveTarget> Targets { get; init; } = new();
     public bool ShowSpace { get; init; }
+    /// <summary>How Claude Desktop shows it: one of the <see cref="HubViewModel"/> Desktop* filter names.</summary>
+    public required string DesktopState { get; init; }
+    /// <summary>Empty when Claude Desktop lists the conversation as usual.</summary>
+    public string DesktopNote { get; init; } = "";
+    public string DesktopTip { get; init; } = "";
+    public bool HasDesktopNote => DesktopNote.Length > 0;
     public bool IsChecked { get; set { Set(ref field, value); Changed?.Invoke(); } }
     public Action? Changed { get; set; }
 
@@ -85,6 +91,10 @@ public sealed class HubViewModel(DeckService service) : Bindable
     public string SpaceFilter { get; set { Set(ref field, value ?? All); Filter(); } } = All;
     public List<string> GroupFilters { get; private set { Set(ref field, value); } } = [All];
     public string GroupFilter { get; set { Set(ref field, value ?? All); Filter(); } } = All;
+    public const string DesktopShown = "In Claude Desktop", DesktopRemoved = "Removed in Claude Desktop", DesktopOther = "Under another account",
+        DesktopNever = "Terminal conversations";
+    public List<string> DesktopFilters { get; } = [All, DesktopShown, DesktopRemoved, DesktopOther, DesktopNever];
+    public string DesktopFilter { get; set { Set(ref field, value ?? All); Filter(); } } = All;
     public List<string> Sorts { get; } = ["Newest first", "Largest first"];
     public string Sort { get; set { Set(ref field, value); Filter(); } } = "Newest first";
     public string Summary { get; private set => Set(ref field, value); } = "Loading…";
@@ -103,6 +113,8 @@ public sealed class HubViewModel(DeckService service) : Bindable
     public ICommand SelectShownCommand => new RelayCommand(() => { foreach (var r in Rows) r.IsChecked = true; });
     public ICommand ClearCommand => new RelayCommand(() => { foreach (var r in _all) r.IsChecked = false; });
     public ICommand DeleteCommand => new RelayCommand(() => _ = DeleteAsync());
+    public ICommand ShowSelectedCommand => new RelayCommand(() =>
+        _ = ShowInDesktopAsync(_all.Where(r => r.IsChecked && r.DesktopState != DesktopShown).Select(r => r.SessionId).ToList()));
 
     public async Task LoadAsync()
     {
@@ -112,9 +124,10 @@ public sealed class HubViewModel(DeckService service) : Bindable
         {
             var state = service.State;
             var paths = service.Paths;
-            var data = await Task.Run(() => Read(paths, state));
+            var desktop = service.Desktop;
+            var data = await Task.Run(() => Read(paths, state, desktop));
             _loading = true;
-            _all = data.Rows.Select(Row).ToList();
+            _all = data.Rows.Select(x => Row(x, data.Listings)).ToList();
             SpaceFilters = [All, .. data.Rows.Select(r => r.Space.Name).Distinct()];
             GroupFilters = [All, .. data.Groups.Values.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)];
             if (!SpaceFilters.Contains(SpaceFilter)) SpaceFilter = All;
@@ -126,19 +139,38 @@ public sealed class HubViewModel(DeckService service) : Bindable
         }
         finally { IsBusy = false; }
 
-        ConversationRowVM Row((Space Space, ProjectInfo Project, ConversationInfo Conversation, string Group) x)
+        ConversationRowVM Row((Space Space, ProjectInfo Project, ConversationInfo Conversation, string Group) x, Dictionary<string, DesktopListing> listings)
         {
             var s = service.State.Spaces;
             var here = !s.Enabled || x.Space.Id == s.ActiveId;
+            var resume = "\n\nYou can still continue it: choose Resume" + (here ? "" : " after switching to its space") +
+                         $", or run  claude --resume {x.Conversation.SessionId}  in its folder. To remove it for real, tick it and choose \"Delete selected\".";
+            (string State, string Note, string Tip) desktop = listings.TryGetValue(x.Conversation.SessionId, out var listing) ? listing switch
+            {
+                DesktopListing.Listed => (DesktopShown, "", ""),
+                DesktopListing.Removed => (DesktopRemoved, "Removed in Claude Desktop",
+                    "It was removed from Claude Desktop's list. That only hides it there: the conversation itself was not deleted and is still complete on this PC. Choose Show in Claude Desktop to put it back in the list." + resume),
+                _ => (DesktopOther, "Under another account",
+                    "Claude Desktop lists it under an account that is not the one in use, so its list does not show it. Choose Show in Claude Desktop to list it under this account too." + resume),
+            } : (DesktopNever, "Terminal conversation",
+                "It was started in a terminal or an editor, so Claude Desktop never listed it. Choose Show in Claude Desktop to add it to the list." + resume);
             var targets = !s.Enabled ? new List<MoveTarget>()
                 : here ? s.List.Where(o => o.Id != x.Space.Id).Select(o => Target("Send to " + o.Name, o.Id)).ToList()
                 : s.Active is { } active ? [Target("Bring to " + active.Name, active.Id)] : new List<MoveTarget>();
             var c = x.Conversation;
+            // Only the space in use has its conversations in ~/.claude, so only those can be continued.
+            if (here && x.Project.ProjectPath is { } folder)
+                targets.Insert(0, new MoveTarget("Resume", new RelayCommand(() => Resume(c.SessionId, folder))));
+            if (desktop.State != DesktopShown)
+                targets.Add(new MoveTarget("Show in Claude Desktop", new RelayCommand(() => _ = ShowInDesktopAsync([c.SessionId]))));
             return new ConversationRowVM
             {
                 SessionId = c.SessionId,
                 SpaceName = x.Space.Name + (s.Enabled && here ? " (in use)" : ""),
                 ShowSpace = s.Enabled,
+                DesktopState = desktop.State,
+                DesktopNote = desktop.Note,
+                DesktopTip = desktop.Tip,
                 Group = x.Group,
                 Project = x.Project.ProjectPath ?? x.Project.DirName,
                 LastUsed = c.LastUsed,
@@ -156,12 +188,14 @@ public sealed class HubViewModel(DeckService service) : Bindable
     private sealed record HubData(
         List<(Space Space, ProjectInfo Project, ConversationInfo Conversation, string Group)> Rows,
         Dictionary<string, string> Groups,
-        List<SizeRowVM> Storage);
+        List<SizeRowVM> Storage,
+        Dictionary<string, DesktopListing> Listings);
 
     private static string Key(ProjectInfo p) => p.ProjectPath ?? p.DirName;
 
-    private static HubData Read(AppPaths paths, AppState state)
+    private static HubData Read(AppPaths paths, AppState state, DesktopSwitcher desktop)
     {
+        var listings = desktop.Listings(state, SpaceItems.SessionOwners(paths, state.Spaces));
         var raw = SpaceItems.AllConversations(paths, state.Spaces);
         var groups = ProjectGroups.Resolve(paths, state, raw.Select(x => Key(x.Project)));
         var rows = raw.Select(x => (x.Space, x.Project, x.Conversation, groups[Key(x.Project)])).ToList();
@@ -204,7 +238,7 @@ public sealed class HubViewModel(DeckService service) : Bindable
             storage.Add(new SizeRowVM("Claude's scratch folder", scratchDir, scratch, scratch / (double)max, IsHeading: true));
             storage.Add(new SizeRowVM("Temporary files of past sessions", "Safe to clear once those sessions are finished", scratch, scratch / (double)max));
         }
-        return new HubData(rows, groups, storage);
+        return new HubData(rows, groups, storage, listings);
     }
 
     private List<GroupVM> BuildGroups(HubData data, AppState state)
@@ -256,6 +290,44 @@ public sealed class HubViewModel(DeckService service) : Bindable
         await Busy("Moving…", () => service.MoveConversationAsync(c.SessionId, toSpaceId));
     }
 
+    /// <summary>Continues a conversation in a new terminal window, in the folder it was started in (Claude Code finds it by that folder).</summary>
+    private static void Resume(string sessionId, string folder)
+    {
+        if (!Directory.Exists(folder))
+        {
+            Dialog.Error("That did not work", $"The folder \"{folder}\" no longer exists, so Claude Code cannot continue this conversation there.");
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", "/k claude --resume " + sessionId)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = folder,
+            });
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            Dialog.Error("That did not work", "Could not open a terminal window: " + e.Message);
+        }
+    }
+
+    private async Task ShowInDesktopAsync(List<string> sessionIds)
+    {
+        if (IsBusy) return;
+        if (sessionIds.Count == 0)
+        {
+            Dialog.Error("Nothing to show", "Every ticked conversation is already in Claude Desktop's list.");
+            return;
+        }
+        var answer = Dialog.Ask($"Show {sessionIds.Count} conversation(s) in Claude Desktop?",
+            "They appear in Claude Desktop's sidebar, under the account of their space, and you can continue them there. " +
+            "Conversations started in a terminal or editor get a new sidebar entry. The conversations themselves do not change.\n\n" +
+            "Claude Desktop reads its list only when it starts, so it will close and open again.", "Show");
+        if (answer is null) return;
+        await Busy("Putting conversations back in Claude Desktop…", () => service.ShowInDesktopAsync(sessionIds));
+    }
+
     private async Task DeleteAsync()
     {
         if (IsBusy) return;
@@ -288,7 +360,8 @@ public sealed class HubViewModel(DeckService service) : Bindable
         var search = Search.Trim();
         var shown = _all.Where(r => r.Matches(search)
                                     && (SpaceFilter == All || r.SpaceName.StartsWith(SpaceFilter, StringComparison.Ordinal))
-                                    && (GroupFilter == All || string.Equals(r.Group, GroupFilter, StringComparison.OrdinalIgnoreCase)));
+                                    && (GroupFilter == All || string.Equals(r.Group, GroupFilter, StringComparison.OrdinalIgnoreCase))
+                                    && (DesktopFilter == All || r.DesktopState == DesktopFilter));
         shown = Sort == "Largest first" ? shown.OrderByDescending(r => r.Bytes) : shown.OrderByDescending(r => r.LastUsed);
         Rows.Clear();
         foreach (var row in shown) Rows.Add(row);

@@ -171,6 +171,31 @@ public class DesktopTests
     }
 
     [Fact]
+    public void A_profile_signed_in_to_another_account_drops_the_old_email_and_plan()
+    {
+        using var box = new Sandbox();
+        box.SeedLive("alice", "acc-alice");
+        var state = Separate();
+        state.Profiles.Add(new Profile { Kind = AccountKind.ClaudeCode, Name = "alice", AccountKey = "acc-alice", Email = "alice@example.com", Plan = "max" });
+        state.Profiles.Add(new Profile { Kind = AccountKind.ClaudeCode, Name = "bob", AccountKey = "acc-bob", Email = "bob@example.com", Plan = "team" });
+        var desktop = new DesktopSwitcher(box.Paths, box.Host);
+        desktop.Reconcile(state);
+        var p = state.Profiles.Single(x => x.Kind == AccountKind.Desktop);
+        Assert.Equal(("alice@example.com", "max"), (p.Email, p.Plan));
+
+        // Claude Desktop now records a sign-in of bob, then of an account no Claude Code sign-in knows.
+        box.SeedLive("bob", "acc-bob");
+        desktop.Reconcile(state);
+        Assert.Equal(("bob@example.com", "team"), (p.Email, p.Plan));
+
+        box.SeedLive("carol", "acc-carol");
+        desktop.Reconcile(state);
+        Assert.Equal("acc-carol", p.AccountKey);
+        Assert.Null(p.Email);
+        Assert.Null(p.Plan);
+    }
+
+    [Fact]
     public void Nothing_moves_when_Claude_will_not_close()
     {
         using var box = new Sandbox();
@@ -301,6 +326,135 @@ public class SharedSessionsTests
         Assert.Equal("shared settings", File.ReadAllText(Path.Combine(box.Live, "claude_desktop_config.json")));
         Assert.Equal("alice", File.ReadAllText(Path.Combine(box.Paths.DesktopStore, alice.Id, "Network", "Cookies")));
         Assert.Equal("acc-alice", alice.AccountKey);
+    }
+
+    [Fact]
+    public void With_spaces_each_account_lists_only_its_own_spaces_conversations()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, bob) = TwoAccounts(box);
+        SignIn(box, "bob");
+        desktop.Reconcile(state);
+        string Entry(string id) => new JsonObject { ["cliSessionId"] = id }.ToJsonString();
+        File.WriteAllText(Session(box, "alice", "game"), Entry("s-game"));   // shared into Alice earlier
+        File.WriteAllText(Session(box, "bob", "game"), Entry("s-game"));
+        File.WriteAllText(Session(box, "bob", "work"), Entry("s-work"));     // only Bob lists a work conversation
+        File.WriteAllText(Session(box, "bob", "other"), Entry("s-unknown")); // no space holds it
+        var work = new Space { Name = "Work", DesktopProfileId = alice.Id };
+        var personal = new Space { Name = "Personal", DesktopProfileId = bob.Id };
+        state.Spaces.List = [work, personal];
+        state.Spaces.ActiveId = work.Id;
+        state.Spaces.Enabled = true;
+        var owners = new Dictionary<string, string> { ["s-work"] = work.Id, ["s-game"] = personal.Id };
+
+        Assert.Equal(2, desktop.FileSessionsBySpace(state, owners));
+
+        Assert.False(File.Exists(Session(box, "alice", "game")));
+        Assert.True(File.Exists(Session(box, "alice", "work")));    // filed under its own space's account
+        Assert.False(File.Exists(Session(box, "bob", "work")));
+        Assert.True(File.Exists(Session(box, "bob", "game")));
+        Assert.True(File.Exists(Session(box, "bob", "other")));     // left alone
+
+        state.Spaces.Enabled = false;
+        Assert.Equal(2, desktop.RestoreHiddenSessions(state));
+        Assert.True(File.Exists(Session(box, "alice", "game")));
+        Assert.True(File.Exists(Session(box, "bob", "work")));
+        Assert.False(Directory.Exists(Path.Combine(box.Paths.AppDataDir, "desktop-hidden-sessions", "acc-alice")));
+    }
+
+    [Fact]
+    public void With_spaces_conversations_filed_under_an_old_account_are_listed_in_their_space()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, alice, bob) = TwoAccounts(box);
+        SignIn(box, "bob");
+        desktop.Reconcile(state);
+        string Entry(string id) => new JsonObject { ["cliSessionId"] = id }.ToJsonString();
+        // An account this PC used before, not managed here, filed two work conversations; one was deleted later.
+        Directory.CreateDirectory(Path.Combine(box.Live, "claude-code-sessions", "acc-old", Org));
+        File.WriteAllText(Session(box, "old", "w1"), Entry("s-w1"));
+        File.WriteAllText(Session(box, "old", "w2"), Entry("s-w2"));
+        File.WriteAllText(Path.Combine(box.Live, "claude-code-sessions", "acc-old", Org, "deleted_w2"), "");
+        File.WriteAllText(Session(box, "old", "g1"), Entry("s-g1"));
+        var work = new Space { Name = "Work", DesktopProfileId = alice.Id };
+        var personal = new Space { Name = "Personal", DesktopProfileId = bob.Id };
+        state.Spaces.List = [work, personal];
+        state.Spaces.ActiveId = work.Id;
+        state.Spaces.Enabled = true;
+        var owners = new Dictionary<string, string> { ["s-w1"] = work.Id, ["s-w2"] = work.Id, ["s-g1"] = personal.Id };
+
+        Assert.Equal(2, desktop.ListOwnConversations(state, owners));
+
+        Assert.True(File.Exists(Session(box, "alice", "w1")));
+        Assert.False(File.Exists(Session(box, "alice", "w2")));  // deleted stays deleted
+        Assert.False(File.Exists(Session(box, "alice", "g1")));  // another space's conversation
+        Assert.True(File.Exists(Session(box, "bob", "g1")));
+        Assert.True(File.Exists(Session(box, "old", "w1")));     // only copied
+        Assert.Equal(0, desktop.ListOwnConversations(state, owners));
+    }
+
+    [Fact]
+    public void Listings_tell_shown_removed_and_other_account_conversations_apart()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, _, _) = TwoAccounts(box);   // Bob is signed in
+        SignIn(box, "bob");
+        desktop.Reconcile(state);
+        string Entry(string id) => new JsonObject { ["cliSessionId"] = id }.ToJsonString();
+        File.WriteAllText(Session(box, "bob", "shown"), Entry("s-shown"));
+        File.WriteAllText(Session(box, "bob", "gone"), Entry("s-gone"));
+        File.WriteAllText(Path.Combine(box.Live, "claude-code-sessions", "acc-bob", Org, "deleted_gone"), "1794398090918");
+        File.WriteAllText(Session(box, "alice", "other"), Entry("s-other"));
+
+        var listings = desktop.Listings(state, new Dictionary<string, string>());
+
+        Assert.Equal(DesktopListing.Listed, listings["s-shown"]);
+        Assert.Equal(DesktopListing.Removed, listings["s-gone"]);
+        Assert.Equal(DesktopListing.OtherAccount, listings["s-other"]);
+        Assert.False(listings.ContainsKey("s-terminal"));                 // never listed: started in a terminal
+
+        Assert.Equal(2, desktop.ShowInSidebar(state, ["s-gone", "s-other", "s-terminal"], new Dictionary<string, string>()));
+
+        Assert.False(File.Exists(Path.Combine(box.Live, "claude-code-sessions", "acc-bob", Org, "deleted_gone")));
+        Assert.True(File.Exists(Session(box, "bob", "other")));          // copied under the account in use
+        Assert.True(File.Exists(Session(box, "alice", "other")));        // and left where it was
+        listings = desktop.Listings(state, new Dictionary<string, string>());
+        Assert.Equal(DesktopListing.Listed, listings["s-gone"]);
+        Assert.Equal(DesktopListing.Listed, listings["s-other"]);
+    }
+
+    [Fact]
+    public void A_terminal_conversation_gets_a_new_sidebar_entry_made_from_one_Claude_Desktop_wrote()
+    {
+        using var box = new Sandbox();
+        var (state, desktop, _, _) = TwoAccounts(box);   // Bob is signed in
+        SignIn(box, "bob");
+        desktop.Reconcile(state);
+        File.WriteAllText(Session(box, "bob", "template"), new JsonObject
+        {
+            ["sessionId"] = "local_template", ["cliSessionId"] = "s-template", ["cwd"] = "C:\\Other", ["title"] = "Someone else",
+            ["permissionMode"] = "bypassPermissions", ["prs"] = new JsonArray(), ["turnWrapUp"] = new JsonObject(),
+        }.ToJsonString());
+        var project = Path.Combine(box.Paths.ClaudeDir, "projects", "C--Work-Erp");
+        Directory.CreateDirectory(project);
+        File.WriteAllLines(Path.Combine(project, "s-term.jsonl"),
+        [
+            new JsonObject { ["type"] = "custom-title", ["customTitle"] = "KPI pages" }.ToJsonString(),
+            new JsonObject { ["type"] = "user", ["cwd"] = "C:\\Work\\Erp", ["timestamp"] = "2026-10-05T11:20:15Z", ["message"] = new JsonObject { ["content"] = "Build it" } }.ToJsonString(),
+            new JsonObject { ["type"] = "assistant", ["uuid"] = "a-last", ["timestamp"] = "2026-10-05T11:37:26Z", ["message"] = new JsonObject { ["model"] = "claude-opus-5-5" } }.ToJsonString(),
+        ]);
+
+        Assert.Equal(1, desktop.ShowInSidebar(state, ["s-term"], new Dictionary<string, string>()));
+
+        var made = Directory.GetFiles(Path.Combine(box.Live, "claude-code-sessions", "acc-bob", Org), "local_*.json")
+            .Select(f => FileUtil.ReadJsonObject(f)).OfType<JsonObject>().Single(e => e["cliSessionId"]?.ToString() == "s-term");
+        Assert.NotEqual("local_template", made["sessionId"]!.ToString());
+        Assert.Equal("KPI pages", made["title"]!.ToString());
+        Assert.Equal("C:\\Work\\Erp", made["cwd"]!.ToString());
+        Assert.Equal("a-last", made["lastAssistantUuid"]!.ToString());
+        Assert.Equal("bypassPermissions", made["permissionMode"]!.ToString());   // the account's settings come along
+        Assert.Null(made["prs"]);                                                 // the template's own conversation does not
+        Assert.Equal(DesktopListing.Listed, desktop.Listings(state, new Dictionary<string, string>())["s-term"]);
     }
 
     [Fact]

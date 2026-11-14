@@ -68,7 +68,16 @@ public sealed class SpaceSwitcher(AppPaths paths)
         }
 
         WriteJournal(from.Id, target.Id, moves);
-        Run(moves);
+        try
+        {
+            Run(moves);
+        }
+        catch
+        {
+            // Run already put everything back; the journal is only kept if some of it is still out of place.
+            if (moves.All(m => SpaceItems.Exists(m.From))) File.Delete(paths.SpaceJournal);
+            throw;
+        }
         s.ActiveId = target.Id;
         WriteMarker(target);
         File.Delete(paths.SpaceJournal);
@@ -602,10 +611,7 @@ public sealed class SpaceSwitcher(AppPaths paths)
         {
             try { File.Move(from, to); return; }
             catch (IOException) when (i < 24) { Thread.Sleep(FileUtil.RetryDelayOverrideMs ?? 500); }
-            catch (IOException e)
-            {
-                throw new DeckException("Another program is still using Claude's files, so nothing was switched. Close Claude Code terminals and editors and try again.", e);
-            }
+            catch (IOException e) { throw FileUtil.InUse(from, e); }
         }
     }
 
