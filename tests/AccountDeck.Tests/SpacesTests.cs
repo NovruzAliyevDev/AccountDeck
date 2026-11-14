@@ -417,6 +417,113 @@ public class SpacesTests
     }
 
     [Fact]
+    public void Setup_can_send_one_conversation_to_another_space_than_its_project()
+    {
+        var (box, c) = Seed();
+        using var _box = box;
+        var gameDir = SpaceItems.ProjectDirName("D:\\GameDev\\Necro");
+        Write(c, $"projects/{gameDir}/s-jira.jsonl", new JsonObject { ["type"] = "user", ["cwd"] = "D:\\GameDev\\Necro" }.ToJsonString() + "\n");
+        Write(c, "file-history/s-jira/f@v1", "v1");
+        File.AppendAllText(Path.Combine(c, "history.jsonl"),
+            new JsonObject { ["display"] = "jira", ["project"] = "D:\\GameDev\\Necro", ["sessionId"] = "s-jira" }.ToJsonString() + "\n");
+        var state = new AppState();
+        var (work, personal, plan) = WorkAndPersonal(box, state);
+        plan.ConversationOwners["s-jira"] = work.Id;   // the project is Personal, this one conversation is Work
+        var spaces = new SpaceSwitcher(box.Paths);
+
+        spaces.SetUp(state, plan);
+
+        var parked = Path.Combine(box.Paths.SpacesStore, personal.Id);
+        Assert.True(Has(parked, $"projects/{gameDir}/s-game.jsonl"));
+        Assert.False(Has(parked, $"projects/{gameDir}/s-jira.jsonl"));
+        Assert.True(Has(c, $"projects/{gameDir}/s-jira.jsonl"));
+        Assert.True(Has(c, "file-history/s-jira/f@v1"));
+        Assert.Contains("jira", File.ReadAllText(Path.Combine(c, "history.jsonl")));
+        Assert.DoesNotContain("jira", File.ReadAllText(Path.Combine(parked, "history.jsonl")));
+
+        // On a switch, Personal's project folder comes in without the Work conversation.
+        spaces.Switch(state, personal.Id);
+        Assert.True(Has(c, $"projects/{gameDir}/s-game.jsonl"));
+        Assert.False(Has(c, $"projects/{gameDir}/s-jira.jsonl"));
+    }
+
+    [Fact]
+    public void Project_folders_are_grouped_by_repository_and_worktrees_join_their_repository()
+    {
+        using var box = new Sandbox();
+        string Dir(string rel) { var d = Path.Combine(box.Root, "Home", rel.Replace('/', Path.DirectorySeparatorChar)); Directory.CreateDirectory(d); return d; }
+        var cloud = Dir("Desktop/Tayqa/CloudErp");
+        var erp = Dir("Desktop/Tayqa/CloudErp/TayqaTech.CloudErp"); Dir("Desktop/Tayqa/CloudErp/TayqaTech.CloudErp/.git");
+        var publish = Dir("Desktop/Tayqa/CloudErp/Publish"); Dir("Desktop/Tayqa/CloudErp/Publish/.git");
+        var scripts = Dir("Desktop/Tayqa/CloudErp/Publish/sql/Versions/2-0-1");
+        var sale = Dir("Desktop/Tayqa/TayqaSale");
+        var portal = Dir("Desktop/Tayqa/TayqaSale/ServicePortal"); Dir("Desktop/Tayqa/TayqaSale/ServicePortal/.git/worktrees/x");
+        var wt = Dir("Desktop/Tayqa/TayqaSale/wt/ServicePortal-TSC-6864");
+        File.WriteAllText(Path.Combine(wt, ".git"), "gitdir: " + Path.Combine(portal, ".git", "worktrees", "x"));
+        var gone = Path.Combine(portal, ".claude", "worktrees", "elegant-villani-466c56"); // already removed
+        var fitness = Dir("Desktop/Development/FiruzFitness"); Dir("Desktop/Development/FiruzFitness/.git");
+        var queue = Path.Combine(box.Root, "Home", ".claude", "queues", "Ishtah-20261012-1753-wt-03");
+        var home = Path.Combine(box.Root, "Home");
+        var used = new[] { cloud, erp, scripts, sale, portal, wt, gone, fitness, queue, home };
+        var state = new AppState();
+
+        var groups = ProjectGroups.Resolve(box.Paths, state, used);
+
+        Assert.Equal("CloudErp", groups[erp]);
+        Assert.Equal("CloudErp", groups[scripts]);
+        Assert.Equal("CloudErp", groups[cloud]);  // the folder above has no used parent: it is its own group, same name
+        Assert.Equal("TayqaSale", groups[portal]);
+        Assert.Equal("TayqaSale", groups[wt]);
+        Assert.Equal("TayqaSale", groups[gone]);
+        Assert.Equal("FiruzFitness", groups[fitness]);
+        Assert.Equal("Ishtah", groups[queue]);
+        Assert.Equal("Home folder", groups[home]);
+        _ = publish;
+
+        // The user's change wins.
+        state.ProjectGroups[ProjectGroups.Normalize(scripts)] = "Releases";
+        Assert.Equal("Releases", ProjectGroups.Resolve(box.Paths, state, used)[scripts]);
+    }
+
+    [Fact]
+    public async Task Deleting_conversations_takes_everything_of_theirs_to_the_Recycle_Bin()
+    {
+        var (box, c) = Seed();
+        using var _box = box;
+        box.SeedLive("alice");
+        var workDir = SpaceItems.ProjectDirName("C:\\Work\\Erp");
+        Write(c, $"projects/{workDir}/s-old.jsonl", new string('x', 5000));
+        Write(c, $"projects/{workDir}/s-old/tool-results/a.txt", "result");
+        Write(c, "file-history/s-old/f@v1", new string('y', 3000));
+        Write(c, "todos/s-old-agent-s-old.json", "[]");
+        File.AppendAllText(Path.Combine(c, "history.jsonl"),
+            new JsonObject { ["display"] = "old prompt", ["sessionId"] = "s-old" }.ToJsonString() + "\n");
+        var sidebar = Path.Combine(box.Live, "claude-code-sessions", "acc-alice", "org-1");
+        Write(sidebar, "local_9.json", "{\"cliSessionId\":\"s-old\"}");
+        Write(sidebar, "local_8.json", "{\"cliSessionId\":\"s-work\"}");
+        var service = new DeckService(box.Paths, box.Host, new PlainProtector(), new HttpClient());
+        await service.ReloadAsync();
+
+        var old = SpaceItems.AllConversations(box.Paths, service.State.Spaces).Single(x => x.Conversation.SessionId == "s-old");
+        Assert.Equal(SpaceItems.Everything.Name, old.Space.Name);            // works without spaces too
+        Assert.True(old.Conversation.Bytes >= 5000 + 6 + 3000);              // transcript + its folder + file history
+
+        var deleted = await service.DeleteConversationsAsync(["s-old"]);
+
+        Assert.Equal(1, deleted);
+        Assert.False(Has(c, $"projects/{workDir}/s-old.jsonl"));
+        Assert.False(Has(c, $"projects/{workDir}/s-old"));
+        Assert.False(Has(c, "file-history/s-old"));
+        Assert.False(Has(c, "todos/s-old-agent-s-old.json"));
+        Assert.DoesNotContain("old prompt", File.ReadAllText(Path.Combine(c, "history.jsonl")));
+        Assert.Contains("p1", File.ReadAllText(Path.Combine(c, "history.jsonl")));
+        Assert.False(File.Exists(Path.Combine(sidebar, "local_9.json")));
+        Assert.True(File.Exists(Path.Combine(sidebar, "local_8.json")));
+        Assert.True(Has(c, $"projects/{workDir}/s-work.jsonl"));
+        Assert.False(Directory.EnumerateFileSystemEntries(Path.Combine(box.Paths.AppDataDir, "deleted")).Any()); // handed to the bin
+    }
+
+    [Fact]
     public void Moving_a_conversation_refiles_its_Claude_Desktop_sidebar_entry()
     {
         using var box = new Sandbox();

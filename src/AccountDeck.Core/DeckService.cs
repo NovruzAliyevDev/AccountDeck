@@ -154,6 +154,59 @@ public sealed class DeckService
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// Deletes conversations with everything that belongs to them (transcript, file history, to-dos, prompt
+    /// history lines, Claude Desktop sidebar entries). It all goes to the Recycle Bin as one folder.
+    /// Claude Desktop is closed while it happens. Returns how many conversations were deleted.
+    /// </summary>
+    public async Task<int> DeleteConversationsAsync(IReadOnlyCollection<string> sessionIds)
+    {
+        var found = 0;
+        await RunAsync(() =>
+        {
+            if (sessionIds.Count == 0) return Task.CompletedTask;
+            var staging = Path.Combine(Paths.AppDataDir, "deleted", "Claude conversations " + DateTime.Now.ToString("yyyy-MM-dd HH.mm.ss"));
+            WithClaudeClosed(relaunch: false, work: () =>
+            {
+                var (count, undo) = Spaces.GatherForDelete(State, sessionIds, staging);
+                try
+                {
+                    Desktop.RemoveSessionEntries(State, sessionIds, staging);
+                }
+                catch
+                {
+                    undo();
+                    throw;
+                }
+                found = count;
+            });
+            if (Directory.Exists(staging))
+            {
+                try { _host.DeleteFolder(staging); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    Log($"Deleted {found} conversation(s), but the Recycle Bin could not take them. They are in {staging}.", error: true);
+                    return Task.CompletedTask;
+                }
+            }
+            Log($"Deleted {found} conversation(s). They are in the Recycle Bin.");
+            return Task.CompletedTask;
+        });
+        return found;
+    }
+
+    /// <summary>Puts a project folder in another group (null: back to the suggested one).</summary>
+    public Task SetProjectGroupAsync(IEnumerable<string> projectPaths, string? group) => RunAsync(() =>
+    {
+        foreach (var path in projectPaths)
+        {
+            var key = ProjectGroups.Normalize(path);
+            if (string.IsNullOrWhiteSpace(group)) State.ProjectGroups.Remove(key);
+            else State.ProjectGroups[key] = group.Trim();
+        }
+        return Task.CompletedTask;
+    });
+
     public Task UpdateSpacesAsync(Action<SpaceSettings> change) => RunAsync(() =>
     {
         change(State.Spaces);

@@ -1,0 +1,166 @@
+<Window x:Class="AccountDeck.App.HubWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Account Deck - Hub" Width="1000" Height="720" MinWidth="720" MinHeight="460"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="24,18,24,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Hub" FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap"
+                       Text="Everything Claude keeps for your accounts: conversations sorted into projects, what takes room on disk, and which folders make up each project." />
+        </StackPanel>
+
+        <TabControl Grid.Row="1" IsEnabled="{Binding IsIdle}">
+            <!-- Conversations -->
+            <TabItem Header="Conversations">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,8">
+                        <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding Sorts}" SelectedItem="{Binding Sort}" MinWidth="130" Margin="8,0,0,0" />
+                        <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding GroupFilters}" SelectedItem="{Binding GroupFilter}" MinWidth="140" Margin="8,0,0,0"
+                                  ToolTip="Project" />
+                        <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding SpaceFilters}" SelectedItem="{Binding SpaceFilter}" MinWidth="120" Margin="8,0,0,0"
+                                  ToolTip="Space" Visibility="{Binding SpacesOn, Converter={StaticResource Show}}" />
+                        <TextBox x:Name="SearchBox" Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Search by title, first prompt, folder, project or space" />
+                    </DockPanel>
+
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Rows}" HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="2,5">
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}" VerticalAlignment="Top" Margin="0,2,10,0" />
+                                    <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Targets}" Focusable="False" VerticalAlignment="Center" Margin="12,0,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Content="{Binding Label}" Command="{Binding Command}" Margin="0,2" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Size}" Style="{StaticResource Muted}" FontSize="12"
+                                               VerticalAlignment="Top" MinWidth="70" TextAlignment="Right" Margin="12,2,0,0" />
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Style="{StaticResource Pill}" Margin="0,0,6,0" Visibility="{Binding ShowSpace, Converter={StaticResource Show}}">
+                                                <TextBlock Text="{Binding SpaceName}" FontSize="12" />
+                                            </Border>
+                                            <Border Style="{StaticResource Pill}" Background="#3A5A8C" Margin="0,0,8,0">
+                                                <TextBlock Text="{Binding Group}" FontSize="12" Foreground="White" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Date}" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Text}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" ToolTip="{Binding Text}" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"
+                                                   Visibility="{Binding HasDetail, Converter={StaticResource Show}}" />
+                                        <TextBlock Text="{Binding Project}" Style="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <DockPanel Grid.Row="2" Margin="0,8,0,0">
+                        <Button DockPanel.Dock="Right" Content="Delete selected…" Command="{Binding DeleteCommand}" IsEnabled="{Binding HasSelection}" Margin="8,0,0,0" />
+                        <Button DockPanel.Dock="Right" Content="Clear" Command="{Binding ClearCommand}" IsEnabled="{Binding HasSelection}" Margin="8,0,0,0" />
+                        <Button DockPanel.Dock="Right" Content="Tick all shown" Command="{Binding SelectShownCommand}" />
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Summary}" Style="{StaticResource Muted}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectionText}" Style="{StaticResource Muted}" FontSize="12" />
+                        </StackPanel>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- Storage -->
+            <TabItem Header="Storage">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                    <ItemsControl ItemsSource="{Binding Storage}" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="230" />
+                                        <ColumnDefinition Width="90" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" Margin="0,12,0,0"
+                                                   Visibility="{Binding IsHeading, Converter={StaticResource Show}}" />
+                                        <TextBlock Text="{Binding Name}" Margin="16,0,0,0" Visibility="{Binding IsItem, Converter={StaticResource Show}}" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" FontSize="12" Margin="16,0,0,0" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Height="8" CornerRadius="4" Background="#2F8F6B" HorizontalAlignment="Left"
+                                            VerticalAlignment="Bottom" Margin="0,0,0,6" Width="{Binding BarWidth}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Size}" TextAlignment="Right" VerticalAlignment="Bottom" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Groups -->
+            <TabItem Header="Projects">
+                <DockPanel Margin="0,10,0,0">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Claude works per folder, so one project is often many folders: the repository, its sub-folders and every worktree. They are grouped for you. Rename a project, or type another project name next to a folder to move it (a new name makes a new project). Nothing on disk changes." />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Groups}" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+                                        <Expander>
+                                            <Expander.Header>
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Right" Content="Rename" Command="{Binding Rename}" Margin="8,0,0,0" />
+                                                    <TextBox DockPanel.Dock="Right" Text="{Binding NewName, UpdateSourceTrigger=PropertyChanged}" MinWidth="160" />
+                                                    <StackPanel Margin="0,0,12,0">
+                                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" FontSize="12" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Expander.Header>
+                                            <ItemsControl ItemsSource="{Binding Folders}" Focusable="False" Margin="0,8,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <DockPanel Margin="0,0,0,6">
+                                                            <Button DockPanel.Dock="Right" Content="Use suggestion" Command="{Binding Reset}" Margin="8,0,0,0"
+                                                                    Visibility="{Binding IsChanged, Converter={StaticResource Show}}" />
+                                                            <ComboBox DockPanel.Dock="Right" IsEditable="True" ItemsSource="{Binding AllGroups}" MinWidth="170"
+                                                                      Text="{Binding Group, UpdateSourceTrigger=LostFocus}" VerticalAlignment="Center" />
+                                                            <StackPanel Margin="0,0,12,0">
+                                                                <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" FontSize="12" />
+                                                            </StackPanel>
+                                                        </DockPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Expander>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+
+        <DockPanel Grid.Row="2" Margin="0,12,0,0">
+            <Button DockPanel.Dock="Right" Content="Close" IsCancel="True" MinWidth="90" Click="OnClose" />
+            <TextBlock Text="{Binding BusyText}" Style="{StaticResource Muted}" VerticalAlignment="Center"
+                       Visibility="{Binding IsBusy, Converter={StaticResource Show}}" />
+        </DockPanel>
+    </Grid>
+</Window>

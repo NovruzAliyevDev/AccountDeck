@@ -19,7 +19,7 @@ public sealed record SpaceItem(string Key, ItemGroup Group, string Title, string
 }
 
 /// <summary>One conversation of a project: its title (if it was given one), the first thing typed, and when.</summary>
-public sealed record ConversationInfo(string SessionId, string? Title, string? FirstPrompt, DateTimeOffset? Started, DateTimeOffset LastUsed);
+public sealed record ConversationInfo(string SessionId, string? Title, string? FirstPrompt, DateTimeOffset? Started, DateTimeOffset LastUsed, long Bytes = 0);
 
 /// <summary>A folder under ~/.claude/projects: one project path, with its conversations and memory.</summary>
 public sealed record ProjectInfo(string DirName, string? ProjectPath, int Conversations, DateTimeOffset? LastUsed);
@@ -221,18 +221,48 @@ public static partial class SpaceItems
     public static List<(Space Space, ProjectInfo Project, ConversationInfo Conversation)> AllConversations(AppPaths paths, SpaceSettings s)
     {
         var all = new List<(Space, ProjectInfo, ConversationInfo)>();
-        foreach (var space in s.List)
+        foreach (var (space, root) in Roots(paths, s))
         {
-            foreach (var dir in Dirs(Path.Combine(SpaceRoot(paths, s, space.Id), "projects")))
+            foreach (var dir in Dirs(Path.Combine(root, "projects")))
             {
                 var sessions = Directory.GetFiles(dir, "*.jsonl");
                 if (sessions.Length == 0) continue;
                 var project = new ProjectInfo(Path.GetFileName(dir), ProjectPathOf(sessions), sessions.Length, null);
-                foreach (var c in Conversations(dir)) all.Add((space, project, c));
+                foreach (var c in Conversations(dir))
+                    all.Add((space, project, c with { Bytes = c.Bytes + FolderSize(Path.Combine(root, "file-history", c.SessionId)) }));
             }
         }
         return all.OrderByDescending(x => x.Item3.LastUsed).ToList();
     }
+
+    /// <summary>Stands for ~/.claude as a whole while spaces are not set up.</summary>
+    public static readonly Space Everything = new() { Id = "", Name = "This PC" };
+
+    /// <summary>Each space with the folder its data is in; without spaces, just ~/.claude.</summary>
+    public static IEnumerable<(Space Space, string Root)> Roots(AppPaths paths, SpaceSettings s) =>
+        s.Enabled ? s.List.Select(x => (x, SpaceRoot(paths, s, x.Id))) : [(Everything, paths.ClaudeDir)];
+
+    /// <summary>Total size of the files in a folder (0 if it does not exist).</summary>
+    public static long FolderSize(string dir)
+    {
+        if (!Directory.Exists(dir)) return 0;
+        try
+        {
+            return new DirectoryInfo(dir).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+                .Sum(f => f.Length);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return 0; }
+    }
+
+    public static long PathSize(string path) => File.Exists(path) ? new FileInfo(path).Length : FolderSize(path);
+
+    public static string FormatBytes(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0} KB",
+        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:0.0} MB",
+        _ => $"{bytes / 1024.0 / 1024 / 1024:0.00} GB",
+    };
 
     private static List<ConversationInfo> Conversations(string dir)
     {
@@ -257,6 +287,7 @@ public static partial class SpaceItems
                         if (t is not null && t.RootElement.TryGetProperty("customTitle", out var ct) && ct.GetString() is { Length: > 0 } named)
                             title = named;
                     }
+                    if (first is not null && shown is not null) break;
                     if (first is not null || !line.Contains("\"type\":\"user\"", StringComparison.Ordinal)) continue;
                     using var doc = TryParse(line);
                     if (doc is null) continue;
@@ -269,7 +300,8 @@ public static partial class SpaceItems
                 }
             }
             catch (IOException) { }
-            list.Add(new ConversationInfo(id, shown ?? title, first, started, new DateTimeOffset(File.GetLastWriteTimeUtc(file), TimeSpan.Zero)));
+            var bytes = new FileInfo(file).Length + FolderSize(Path.Combine(dir, id));
+            list.Add(new ConversationInfo(id, shown ?? title, first, started, new DateTimeOffset(File.GetLastWriteTimeUtc(file), TimeSpan.Zero), bytes));
         }
         return list.OrderByDescending(c => c.LastUsed).ToList();
     }

@@ -176,6 +176,47 @@ public sealed partial class DesktopSwitcher
         return (orgs.Length, Undo);
     }
 
+    /// <summary>
+    /// Moves Claude Desktop's sidebar entries of the given Code conversations (in every account) into
+    /// <paramref name="staging"/>, so they go to the Recycle Bin with the conversations. Claude Desktop must be closed.
+    /// </summary>
+    public (int Removed, Action Undo) RemoveSessionEntries(AppState state, IReadOnlyCollection<string> cliSessionIds, string staging)
+    {
+        var install = Install ??= host.Detect();
+        if (install is null) return (0, () => { });
+        var shared = state.Settings.ShareDesktopSessions;
+        var roots = state.Of(AccountKind.Desktop)
+            .Select(p => Path.Combine(shared || state.IsActive(p) ? install.DataDir : Parked(p.Id), SessionsFolder))
+            .Append(Path.Combine(install.DataDir, SessionsFolder))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
+        var wanted = new HashSet<string>(cliSessionIds, StringComparer.Ordinal);
+        var moved = new List<(string From, string To)>();
+        void Undo()
+        {
+            foreach (var (from, to) in Enumerable.Reverse(moved)) BestEffort(() => File.Move(to, from));
+        }
+        try
+        {
+            var n = 0;
+            foreach (var root in roots)
+            foreach (var file in Directory.EnumerateFiles(root, "local_*.json", SearchOption.AllDirectories).ToList())
+            {
+                var id = FileUtil.ReadJsonObject(file)?["cliSessionId"]?.GetValue<string>();
+                if (id is null || !wanted.Contains(id)) continue;
+                var dest = Path.Combine(staging, "claude-desktop", (++n).ToString("000") + "-" + Path.GetFileName(file));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Move(file, dest);
+                moved.Add((file, dest));
+            }
+        }
+        catch
+        {
+            Undo();
+            throw;
+        }
+        return (moved.Count, Undo);
+    }
+
     private sealed record SessionFile(string Account, string Org, string Name, string Path, DateTime Time);
 
     /// <summary>

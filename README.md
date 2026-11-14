@@ -68,6 +68,48 @@ the account with the most room left.
 - Claude Desktop usage is what Claude Desktop itself last recorded, so it can be a little old for
   accounts you are not using. Claude Code usage comes live from Anthropic. Codex does not report usage.
 
+## Keep work and personal apart (Spaces)
+
+Sharing sessions puts every account's conversations in one list. If you would rather keep, say,
+work and personal fully apart, but still share the instructions that are not about either, use
+**Spaces** (Windows for now). A space is a Claude Desktop account plus a Claude Code account, with its own
+conversations, file history and prompt history. Switching a space switches all of it at once.
+
+**Settings > Set up spaces…** opens a one-time guide:
+
+1. **Spaces and accounts.** Name each space and pick its Claude Desktop and Claude Code accounts.
+   Optionally tick the names found in your instructions (company, product or ticket names) so the
+   items that mention them start on the right space.
+2. **What both spaces share.** Every instruction, skill, agent, command and setting is one row,
+   with a preview. Each `##` section of `~/.claude/CLAUDE.md` is its own row. Choose **Both**,
+   **only one space**, or, for settings, **each its own copy**. Conversations, file history, prompt
+   history and to-dos are always kept apart.
+3. **Projects.** Each project folder goes to one space. Path rules (for example everything under
+   `D:\GameDev` is personal) sort them for you; expand a project to see its conversations.
+4. **Summary**, then **Start**.
+
+After that:
+
+| To do this | Do this |
+| --- | --- |
+| Switch space | **Switch** on the space at the top of the Accounts tab, or from the tray icon. |
+| Continue a conversation in the other space | **Conversations…** on the Spaces bar, find it (search by title, first prompt, folder or space), then **Bring to …** or **Send to …**. Its transcript, file history, to-dos, prompt history and Claude Desktop sidebar entry move; the project's memory stays. |
+| Change what is shared | **Settings > Change spaces and what they share…** |
+| Undo it all | **Settings > Turn off spaces…** puts every conversation back together. Anything that would overwrite something (such as each space's own copy of settings) is left in `%LOCALAPPDATA%\AccountDeck\spaces` and listed in the Activity tab. |
+
+Good to know:
+
+- **Close Claude Code terminals before switching or moving.** Claude Desktop is closed for you; a
+  space switch or move is refused while a terminal or editor Claude Code is still running.
+- **Single-account switching stays inside the space.** Switching to an account that belongs to
+  the other space is refused; switch the space instead. Copying session entries between accounts
+  is off while Spaces is on.
+- **How it is stored.** The space in use lives in `~/.claude` as usual; the other space's private
+  parts are parked in `%LOCALAPPDATA%\AccountDeck\spaces\<space id>` and moved in on a switch
+  (renames on the same drive). Shared `CLAUDE.md` sections become files in `~/.claude/rules/`, which
+  Claude Code loads for every project. `CLAUDE.md` and the prompt history are backed up to
+  `spaces\backup-<time>` during setup. A journal undoes an interrupted switch on the next start.
+
 ## How it works
 
 | Tool | Where the sign-in lives | What a switch does |

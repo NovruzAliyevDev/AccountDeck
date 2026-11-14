@@ -2,10 +2,10 @@ using System.Windows;
 
 namespace AccountDeck.App;
 
-/// <summary>Lists every space's conversations and moves one to another space.</summary>
-public partial class ConversationsWindow : Window
+/// <summary>The hub: conversations, storage and project groups for every account and space.</summary>
+public partial class HubWindow : Window
 {
-    public ConversationsWindow(ConversationsViewModel vm)
+    public HubWindow(HubViewModel vm)
     {
         InitializeComponent();
         DataContext = vm;

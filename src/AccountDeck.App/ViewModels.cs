@@ -93,7 +93,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         });
         SetUpSpacesCommand = new RelayCommand(OpenSpaces);
         TurnOffSpacesCommand = new RelayCommand(TurnOffSpaces);
-        ConversationsCommand = new RelayCommand(() => new ConversationsWindow(new ConversationsViewModel(_service)).ShowDialog());
+        HubCommand = new RelayCommand(OpenHub);
         _service.Changed += () => _ui.BeginInvoke(Rebuild);
     }
 
@@ -103,7 +103,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool SpacesOff => !SpacesEnabled;
     public ICommand SetUpSpacesCommand { get; }
     public ICommand TurnOffSpacesCommand { get; }
-    public ICommand ConversationsCommand { get; }
+    public ICommand HubCommand { get; }
     public ObservableCollection<SectionVM> Sections { get; } = new();
     public ObservableCollection<LogVM> Log { get; } = new();
     public ICommand RefreshCommand { get; }
@@ -343,6 +343,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _ = Run("Saving…", vm.SaveEditsAsync);
         }
     }
+
+    public void OpenHub() => new HubWindow(new HubViewModel(_service)).ShowDialog();
 
     private void TurnOffSpaces()
     {

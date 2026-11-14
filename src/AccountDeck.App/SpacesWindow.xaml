@@ -181,7 +181,11 @@
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="100" />
                                                             <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
+                                                        <ComboBox Grid.Column="2" ItemsSource="{Binding Options}" DisplayMemberPath="Label"
+                                                                  SelectedItem="{Binding Selected}" MinWidth="150" VerticalAlignment="Top" Margin="12,0,0,0"
+                                                                  ToolTip="Pick a space for this conversation if it does not belong with the rest of the project" />
                                                         <TextBlock Text="{Binding Date}" Style="{StaticResource Muted}" FontSize="12" />
                                                         <StackPanel Grid.Column="1">
                                                             <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />

@@ -124,6 +124,7 @@ public sealed class Tray : IDisposable
             items.Add(new Forms.ToolStripSeparator());
         }
         items.Add("Open Account Deck", null, (_, _) => _show());
+        items.Add("Hub…", null, (_, _) => _vm.HubCommand.Execute(null));
         items.Add("Refresh", null, (_, _) => _vm.RefreshCommand.Execute(null));
         items.Add("Quit", null, (_, _) => _quit());
     }

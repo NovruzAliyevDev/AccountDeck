@@ -65,8 +65,20 @@ public sealed class ProjectRowVM : Bindable
     public required ProjectInfo Project { get; init; }
     public string Path => Project.ProjectPath ?? Project.DirName;
     public string Detail => $"{Project.Conversations} conversation(s)" + (Project.LastUsed is { } d ? ", last used " + d.ToLocalTime().ToString("dd MMM yyyy") : "");
-    public List<Option> Options { get; set { Set(ref field, value); } } = new();
+    public List<Option> Options
+    {
+        get;
+        set
+        {
+            Set(ref field, value);
+            foreach (var c in Conversations ?? []) c.SetSpaces(value);
+        }
+    } = new();
     public Option? Selected { get; set => Set(ref field, value); }
+
+    /// <summary>Conversations given to another space than this project's, by session id.</summary>
+    public IEnumerable<(string SessionId, string SpaceId)> Exceptions =>
+        (Conversations ?? []).Where(c => c.Selected?.Id is { } id && id != Selected?.Id).Select(c => (c.SessionId, c.Selected!.Id!));
 
     public required Func<List<ConversationInfo>> Load { get; init; }
     public string ExpandText => $"Show the {Project.Conversations} conversation(s)";
@@ -79,10 +91,11 @@ public sealed class ProjectRowVM : Bindable
             Set(ref field, value);
             if (value && Conversations is null)
             {
-                Conversations = Load().Select(c => new ConversationVM(
+                Conversations = Load().Select(c => new ConversationVM(c.SessionId,
                     (c.Started ?? c.LastUsed).ToLocalTime().ToString("dd MMM yyyy"),
                     c.Title ?? c.FirstPrompt ?? "(no typed prompt, only commands such as /login)",
                     c.Title is not null && c.FirstPrompt is not null ? "First prompt: " + c.FirstPrompt : "")).ToList();
+                foreach (var c in Conversations) c.SetSpaces(Options);
                 Raise(nameof(Conversations));
             }
         }
@@ -90,9 +103,24 @@ public sealed class ProjectRowVM : Bindable
     public List<ConversationVM>? Conversations { get; private set; }
 }
 
-public sealed record ConversationVM(string Date, string Text, string Detail)
+/// <summary>One conversation of a project; it goes with the project unless another space is picked for it.</summary>
+public sealed class ConversationVM(string sessionId, string date, string text, string detail) : Bindable
 {
-    public bool HasDetail => Detail.Length > 0;
+    public const string WithProject = "With the project";
+    public string SessionId => sessionId;
+    public string Date => date;
+    public string Text => text;
+    public string Detail => detail;
+    public bool HasDetail => detail.Length > 0;
+    public List<Option> Options { get; private set { Set(ref field, value); } } = new();
+    public Option? Selected { get; set => Set(ref field, value); }
+
+    public void SetSpaces(List<Option> spaces)
+    {
+        var keep = Selected?.Id;
+        Options = [new Option(WithProject, null), .. spaces];
+        Selected = Options.FirstOrDefault(o => o.Id == keep) ?? Options[0];
+    }
 }
 
 public sealed class RuleRowVM : Bindable
@@ -145,7 +173,7 @@ public sealed class SpacesViewModel : Bindable
             ? "A space is one side of your work, such as Work or Personal. Each space has its own conversations, file history and prompt history, and its own accounts. Pick the accounts for each space and which one you are using right now."
             : "Rename a space or change which accounts it uses.",
         2 => "Choose, item by item, which instructions both spaces use and which belong to one side only. Click an item to read it. Conversations, file history, project memory and prompt history are always kept separate.",
-        3 => "Every project you have used with Claude is listed with its folder. Choose the space it belongs to. Rules like \"D:\\GameDev → Personal\" fill the list for you.",
+        3 => "Every project you have used with Claude is listed with its folder. Choose the space it belongs to. Rules like \"D:\\GameDev → Personal\" fill the list for you. If one conversation belongs elsewhere, open the project's conversations and pick its own space.",
         _ => "",
     };
 
@@ -342,7 +370,10 @@ public sealed class SpacesViewModel : Bindable
         var lines = new List<string>();
         foreach (var space in SpaceRows)
         {
-            var conversations = Projects.Where(p => p.Selected?.Id == space.Space.Id).Sum(p => p.Project.Conversations);
+            var exceptions = Projects.SelectMany(p => p.Exceptions).ToList();
+            var leaving = Projects.Where(p => p.Selected?.Id == space.Space.Id).Sum(p => p.Exceptions.Count());
+            var conversations = Projects.Where(p => p.Selected?.Id == space.Space.Id).Sum(p => p.Project.Conversations)
+                                - leaving + exceptions.Count(e => e.SpaceId == space.Space.Id);
             var own = Rows.Count(r => r.Selected?.Choice.Mode == ItemMode.OnlyIn && r.Selected.Choice.SpaceId == space.Space.Id);
             lines.Add($"{space.Name}{(space.IsLive ? " (in use now)" : "")}: {conversations} conversation(s), {own} item(s) of its own" +
                       $", Claude Desktop: {space.Desktop?.Label ?? "none"}, Claude Code: {space.Code?.Label ?? "none"}.");
@@ -365,6 +396,7 @@ public sealed class SpacesViewModel : Bindable
         Items = Rows.Select(r => r.Item).ToList(),
         Choices = Rows.ToDictionary(r => r.Item.Key, r => r.Selected?.Choice ?? ItemChoice.Shared),
         ProjectOwners = Projects.Where(p => p.Selected?.Id is not null).ToDictionary(p => p.Project.DirName, p => p.Selected!.Id!),
+        ConversationOwners = Projects.SelectMany(p => p.Exceptions).ToDictionary(e => e.SessionId, e => e.SpaceId),
     };
 
     /// <summary>Edit mode: the rows whose choice changed, and the new space names and accounts.</summary>

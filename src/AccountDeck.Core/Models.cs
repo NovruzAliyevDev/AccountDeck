@@ -122,6 +122,8 @@ public sealed class AppState
     public Dictionary<AccountKind, string> ActiveIds { get; set; } = new();
     public Settings Settings { get; set; } = new();
     public SpaceSettings Spaces { get; set; } = new();
+    /// <summary>Project folder to group name, only where the user changed the suggested group.</summary>
+    public Dictionary<string, string> ProjectGroups { get; set => field = new(value, StringComparer.OrdinalIgnoreCase); } = new(StringComparer.OrdinalIgnoreCase);
     public List<LogEntry> Log { get; set; } = new();
 
     public IEnumerable<Profile> Of(AccountKind kind) => Profiles.Where(p => p.Kind == kind);

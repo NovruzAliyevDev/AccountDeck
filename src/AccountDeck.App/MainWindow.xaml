@@ -13,6 +13,8 @@
             <DockPanel Margin="0,0,0,14">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding LastChecked}" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Button Content="Hub" Command="{Binding HubCommand}" Margin="0,0,8,0"
+                            ToolTip="Conversations, storage and projects of every account: search, move, delete" />
                     <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip="Look for new sign-ins and update usage now" />
                 </StackPanel>
                 <StackPanel>
@@ -29,11 +31,7 @@
                                 <TextBlock TextWrapping="Wrap" Text="Demo mode: these are sample accounts in a temporary folder. Nothing here touches your real Claude or Codex sign-ins." />
                             </Border>
                             <StackPanel Margin="0,0,0,24" Visibility="{Binding SpacesEnabled, Converter={StaticResource Show}}">
-                                <DockPanel>
-                                    <Button DockPanel.Dock="Right" Content="Conversations…" Command="{Binding ConversationsCommand}"
-                                            ToolTip="See every space's conversations and move one to another space to continue it there" />
-                                    <TextBlock Text="Spaces" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                </DockPanel>
+                                <TextBlock Text="Spaces" FontSize="18" FontWeight="SemiBold" />
                                 <TextBlock Text="Each space has its own conversations and accounts. Switching a space switches everything that belongs to it." Style="{StaticResource Muted}" Margin="0,6,0,10" />
                                 <ItemsControl ItemsSource="{Binding Spaces}" Focusable="False">
                                     <ItemsControl.ItemsPanel>

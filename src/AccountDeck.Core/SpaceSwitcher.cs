@@ -15,6 +15,8 @@ public sealed class SpaceSetupPlan
     public required Dictionary<string, ItemChoice> Choices { get; init; }
     /// <summary>Folder name under ~/.claude/projects to space id; folders not listed stay with the live space.</summary>
     public required Dictionary<string, string> ProjectOwners { get; init; }
+    /// <summary>Conversation (session id) to space id, for conversations that go to another space than their project.</summary>
+    public Dictionary<string, string> ConversationOwners { get; init; } = new();
 }
 
 /// <summary>
@@ -136,6 +138,12 @@ public sealed class SpaceSwitcher(AppPaths paths)
 
             // 2. Projects, their file history and prompt history go to their space.
             var owners = plan.ProjectOwners.Where(kv => kv.Value != live.Id).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+            var projectOfSession = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var liveProjects = Path.Combine(paths.ClaudeDir, "projects");
+            if (Directory.Exists(liveProjects))
+                foreach (var dir in Directory.GetDirectories(liveProjects))
+                foreach (var f in Directory.GetFiles(dir, "*.jsonl"))
+                    projectOfSession[Path.GetFileNameWithoutExtension(f)] = Path.GetFileName(dir);
             var sessionOwner = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (dir, spaceId) in owners)
             {
@@ -154,6 +162,17 @@ public sealed class SpaceSwitcher(AppPaths paths)
                         Do(new Move(t, Parked(spaceId, "todos/" + Path.GetFileName(t))), undo);
             }
             SplitHistory(owners, backup, undo);
+
+            // 2b. Single conversations that belong to another space than their project.
+            string RootOf(string spaceId) => spaceId == live.Id ? paths.ClaudeDir : Path.Combine(paths.SpacesStore, spaceId);
+            foreach (var (session, spaceId) in plan.ConversationOwners)
+            {
+                if (!projectOfSession.TryGetValue(session, out var dir)) continue;
+                var to = plan.Spaces.FirstOrDefault(x => x.Id == spaceId) ?? throw new DeckException("A conversation was given to a space that does not exist.");
+                var from = owners.GetValueOrDefault(dir, live.Id);
+                if (from == to.Id) continue;
+                undo.Push(MoveSession(RootOf(from), RootOf(to.Id), dir, session, to.Name));
+            }
 
             // 3. Chosen items: park what belongs to another space, copy what every space keeps its own copy of.
             foreach (var (key, choice) in plan.Choices)
@@ -388,9 +407,12 @@ public sealed class SpaceSwitcher(AppPaths paths)
         var to = s.Find(toSpaceId) ?? throw new DeckException("That space no longer exists.");
         var (from, dirName) = FindConversation(state, sessionId) ?? throw new DeckException("That conversation was not found. It may have been moved or deleted.");
         if (from.Id == to.Id) return () => { };
+        return MoveSession(SpaceItems.SpaceRoot(paths, s, from.Id), SpaceItems.SpaceRoot(paths, s, to.Id), dirName, sessionId, to.Name);
+    }
 
-        var src = SpaceItems.SpaceRoot(paths, s, from.Id);
-        var dst = SpaceItems.SpaceRoot(paths, s, to.Id);
+    /// <summary>Moves one conversation's files and prompt-history lines from one space folder to another. Returns an undo action.</summary>
+    private static Action MoveSession(string src, string dst, string dirName, string sessionId, string toName)
+    {
         string In(string root, string rel) => Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
 
         var rels = new List<string> { $"projects/{dirName}/{sessionId}.jsonl", $"projects/{dirName}/{sessionId}", $"file-history/{sessionId}" };
@@ -398,7 +420,7 @@ public sealed class SpaceSwitcher(AppPaths paths)
         if (Directory.Exists(todos)) rels.AddRange(Directory.GetFiles(todos, sessionId + "*").Select(f => "todos/" + Path.GetFileName(f)));
         var moves = rels.Where(r => SpaceItems.Exists(In(src, r))).Select(r => new Move(In(src, r), In(dst, r))).ToList();
         var clash = moves.FirstOrDefault(m => SpaceItems.Exists(m.To));
-        if (clash is not null) throw new DeckException($"\"{to.Name}\" already has a copy of this conversation ({clash.To}). Nothing was moved.");
+        if (clash is not null) throw new DeckException($"\"{toName}\" already has a copy of this conversation ({clash.To}). Nothing was moved.");
 
         var srcHistory = In(src, "history.jsonl");
         var dstHistory = In(dst, "history.jsonl");
@@ -434,6 +456,75 @@ public sealed class SpaceSwitcher(AppPaths paths)
         }
         return Undo;
     }
+
+    /// <summary>
+    /// Gathers everything that belongs to the given conversations (transcript and its folder, file history,
+    /// to-dos, prompt-history lines) into <paramref name="staging"/>, in any space, so the folder can go to the
+    /// Recycle Bin as one item. Returns how many were found and an undo action that puts it all back.
+    /// </summary>
+    public (int Found, Action Undo) GatherForDelete(AppState state, IReadOnlyCollection<string> sessionIds, string staging)
+    {
+        var wanted = new HashSet<string>(sessionIds, StringComparer.OrdinalIgnoreCase);
+        var moves = new List<Move>();
+        var histories = new List<(string Path, string Before)>();
+        var found = 0;
+        void Undo()
+        {
+            SpaceSwitcher.Undo(moves);
+            foreach (var (path, before) in histories) FileUtil.WriteAtomic(path, before);
+        }
+        try
+        {
+            foreach (var (space, root) in SpaceItems.Roots(paths, state.Spaces))
+            {
+                var into = Path.Combine(staging, Safe(space.Name));
+                var projects = Path.Combine(root, "projects");
+                var rels = new List<string>();
+                var here = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (Directory.Exists(projects))
+                    foreach (var dir in Directory.GetDirectories(projects))
+                    foreach (var file in Directory.GetFiles(dir, "*.jsonl"))
+                    {
+                        var id = Path.GetFileNameWithoutExtension(file);
+                        if (!wanted.Contains(id)) continue;
+                        here.Add(id);
+                        var d = Path.GetFileName(dir);
+                        rels.AddRange([$"projects/{d}/{id}.jsonl", $"projects/{d}/{id}", $"file-history/{id}"]);
+                        var todos = Path.Combine(root, "todos");
+                        if (Directory.Exists(todos)) rels.AddRange(Directory.GetFiles(todos, id + "*").Select(f => "todos/" + Path.GetFileName(f)));
+                    }
+                if (here.Count == 0) continue;
+                found += here.Count;
+                string In(string r, string rel) => Path.Combine(r, rel.Replace('/', Path.DirectorySeparatorChar));
+                var batch = rels.Where(r => SpaceItems.Exists(In(root, r))).Select(r => new Move(In(root, r), In(into, r))).ToList();
+                foreach (var m in batch) { MovePath(m.From, m.To); moves.Add(m); }
+
+                var history = Path.Combine(root, "history.jsonl");
+                if (File.Exists(history))
+                {
+                    var before = File.ReadAllText(history);
+                    var lines = before.Split('\n').Where(l => l.Length > 0).ToList();
+                    var gone = lines.Where(l => SessionOf(l) is { } s && here.Contains(s)).ToList();
+                    if (gone.Count > 0)
+                    {
+                        Directory.CreateDirectory(into);
+                        File.WriteAllText(Path.Combine(into, "history-lines.jsonl"), string.Concat(gone.Select(l => l + "\n")));
+                        histories.Add((history, before));
+                        FileUtil.WriteAtomic(history, string.Concat(lines.Except(gone).Select(l => l + "\n")));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            Undo();
+            throw;
+        }
+        return (found, Undo);
+    }
+
+    private static string Safe(string name) =>
+        string.Concat(name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch)).Trim() is { Length: > 0 } s ? s : "space";
 
     /// <summary>The space and project folder a conversation is in.</summary>
     public (Space Space, string DirName)? FindConversation(AppState state, string sessionId)
