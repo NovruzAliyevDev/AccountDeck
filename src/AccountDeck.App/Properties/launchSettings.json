@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "AccountDeck (demo)": {
+      "commandName": "Project",
+      "commandLineArgs": "--demo"
+    },
+    "AccountDeck (real accounts)": {
+      "commandName": "Project"
+    }
+  }
+}

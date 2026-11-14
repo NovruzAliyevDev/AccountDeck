@@ -99,6 +99,18 @@ public sealed class Tray : IDisposable
     {
         var items = _icon.ContextMenuStrip!.Items;
         items.Clear();
+        if (_vm.Spaces.Count > 0)
+        {
+            items.Add(new Forms.ToolStripMenuItem("Spaces") { Enabled = false });
+            foreach (var s in _vm.Spaces)
+            {
+                var id = s.Id;
+                var item = new Forms.ToolStripMenuItem(s.Name) { Checked = s.IsActive };
+                item.Click += (_, _) => _vm.SwitchSpace(id);
+                items.Add(item);
+            }
+            items.Add(new Forms.ToolStripSeparator());
+        }
         foreach (var (section, profiles) in _vm.TrayItems)
         {
             items.Add(new Forms.ToolStripMenuItem(section) { Enabled = false });

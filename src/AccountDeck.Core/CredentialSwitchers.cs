@@ -47,9 +47,13 @@ public abstract class CredentialSwitcher(AccountKind kind, ISecretProtector prot
         return profile;
     }
 
-    public void Switch(AppState state, string targetId)
+    /// <param name="syncFirst">
+    /// Save the live sign-in before replacing it. Space switches do that themselves before moving files,
+    /// because afterwards the live files may already belong to the other space.
+    /// </param>
+    public void Switch(AppState state, string targetId, bool syncFirst = true)
     {
-        Sync(state); // keep the freshest copy of the account we are leaving
+        if (syncFirst) Sync(state); // keep the freshest copy of the account we are leaving
         var target = state.Find(targetId) ?? throw new DeckException("That account no longer exists.");
         if (target.Secret is null) throw new DeckException($"No saved sign-in for \"{target.Name}\".");
         WriteLive(protector.Unprotect(target.Secret));

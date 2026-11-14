@@ -74,6 +74,8 @@ public sealed class FakeHost(DesktopInstall? install) : IDesktopHost
     public bool Close(DesktopInstall i, TimeSpan timeout) { Closed++; return CloseSucceeds; }
     public void Launch(DesktopInstall i) => Launched++;
     public void DeleteFolder(string dir) => Directory.Delete(dir, true);
+    public List<string> RunningTerminals = new();
+    public IReadOnlyList<string> RunningClaudeCode() => RunningTerminals;
 }
 
 public sealed class PlainProtector : ISecretProtector
@@ -402,7 +404,7 @@ public class SharedSessionsTests
 
 public class ClaudeCodeTests
 {
-    private static void SignIn(Sandbox box, string who, long expiresAt = 4102444800000)
+    internal static void SignIn(Sandbox box, string who, long expiresAt = 4102444800000)
     {
         Directory.CreateDirectory(box.Paths.ClaudeDir);
         var credentials = FileUtil.ReadJsonObject(box.Paths.ClaudeCredentialsFile) ?? new JsonObject { ["mcpOAuth"] = new JsonObject { ["server"] = "keep-me" } };

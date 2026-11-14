@@ -14,6 +14,8 @@ public interface IDesktopHost
     bool Close(DesktopInstall install, TimeSpan timeout);
     void Launch(DesktopInstall install);
     void DeleteFolder(string dir);
+    /// <summary>Claude Code processes still running on their own (terminals), as "name (pid)". Used before moving ~/.claude.</summary>
+    IReadOnlyList<string> RunningClaudeCode() => [];
 }
 
 /// <summary>
@@ -109,7 +111,8 @@ public sealed partial class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         foreach (var p in state.Of(AccountKind.Desktop))
             ReadDetails(p, state.IsActive(p) ? live : Parked(p.Id), state, shared);
 
-        if (shared && Directory.Exists(live))
+        // With spaces, each account's sidebar must list only its own sessions: their files are parked with the other space.
+        if (shared && !state.Spaces.Enabled && Directory.Exists(live))
         {
             var copied = SyncSessions(state, live);
             if (copied > 0) log?.Invoke($"Shared {copied} Claude Desktop session(s) between accounts. Restart Claude Desktop if they do not show up.");

@@ -9,12 +9,14 @@ public sealed class DeckService
     private readonly StateStore _store;
     private readonly ClaudeApi _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly IDesktopHost _host;
 
     public AppPaths Paths { get; }
     public AppState State { get; private set; }
     public DesktopSwitcher Desktop { get; }
     public ClaudeCodeSwitcher ClaudeCode { get; }
     public CodexSwitcher Codex { get; }
+    public SpaceSwitcher Spaces { get; }
 
     /// <summary>Raised (on any thread) after the state changed.</summary>
     public event Action? Changed;
@@ -25,12 +27,14 @@ public sealed class DeckService
     public DeckService(AppPaths paths, IDesktopHost host, ISecretProtector protector, HttpClient http, ICredentialStore? claudeCredentials = null)
     {
         Paths = paths;
+        _host = host;
         _store = new StateStore(paths);
         _api = new ClaudeApi(http);
         State = _store.Load();
         Desktop = new DesktopSwitcher(paths, host);
         ClaudeCode = new ClaudeCodeSwitcher(paths, protector, claudeCredentials);
         Codex = new CodexSwitcher(paths, protector);
+        Spaces = new SpaceSwitcher(paths);
     }
 
     public CredentialSwitcher Cli(AccountKind kind) => kind == AccountKind.Codex ? Codex : ClaudeCode;
@@ -50,11 +54,152 @@ public sealed class DeckService
     public Task SwitchAsync(string id) => RunAsync(() =>
     {
         var p = State.Find(id) ?? throw new DeckException("That account no longer exists.");
+        if (State.Spaces.Enabled && State.Spaces.Owner(p) is { } owner && owner.Id != State.Spaces.ActiveId)
+            throw new DeckException($"\"{p.Name}\" belongs to the space \"{owner.Name}\". Switch to that space instead, so its conversations come with it.");
         if (p.Kind == AccountKind.Desktop) Desktop.Switch(State, id);
         else Cli(p.Kind).Switch(State, id);
         Log($"Switched {Label(p.Kind)} to \"{p.Name}\".");
         return Task.CompletedTask;
     });
+
+    /// <summary>
+    /// Switches everything that belongs to a space at once: closes Claude Desktop, swaps the private parts of
+    /// ~/.claude, then the Claude Desktop and Claude Code sign-ins, and starts Claude Desktop again.
+    /// </summary>
+    public Task SwitchSpaceAsync(string spaceId) => RunAsync(() =>
+    {
+        var s = State.Spaces;
+        var target = s.Find(spaceId) ?? throw new DeckException("That space no longer exists.");
+        if (s.ActiveId == target.Id) return Task.CompletedTask;
+        var from = s.Active;
+
+        WithClaudeClosed(relaunch: true, work: () =>
+        {
+            // Save the Claude Code sign-in now: after the swap ~/.claude.json may be the other space's copy.
+            ClaudeCode.Sync(State);
+            Spaces.Switch(State, target.Id);
+            try
+            {
+                if (target.DesktopProfileId is { } d && State.Find(d) is not null && State.ActiveIds.GetValueOrDefault(AccountKind.Desktop) != d)
+                    Desktop.Switch(State, d, relaunch: false);
+                // Written after the swap, so a per-space ~/.claude.json gets this space's account.
+                if (target.ClaudeCodeProfileId is { } c && State.Find(c) is not null)
+                    ClaudeCode.Switch(State, c, syncFirst: false);
+            }
+            catch when (from is not null)
+            {
+                try { Spaces.Switch(State, from.Id); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or DeckException) { }
+                throw;
+            }
+        });
+        Log($"Switched to the space \"{target.Name}\"" + (from is null ? "." : $" (was \"{from.Name}\")."));
+        return Task.CompletedTask;
+    });
+
+    /// <summary>Runs the first-time split of ~/.claude into spaces. Returns the backup folder.</summary>
+    public async Task<string> SetUpSpacesAsync(SpaceSetupPlan plan)
+    {
+        var backup = "";
+        await RunAsync(() =>
+        {
+            WithClaudeClosed(relaunch: false, work: () => backup = Spaces.SetUp(State, plan));
+            var live = State.Spaces.Active!;
+            Log($"Spaces are set up. \"{live.Name}\" is in use now. Files that were rewritten are backed up in {backup}.");
+            return Task.CompletedTask;
+        });
+        return backup;
+    }
+
+    /// <summary>Moves rows of the shared-items list to new choices, with Claude closed once for all of them.</summary>
+    public Task ChangeSpaceItemsAsync(IReadOnlyDictionary<string, ItemChoice> changes) => RunAsync(() =>
+    {
+        if (changes.Count == 0) return Task.CompletedTask;
+        WithClaudeClosed(relaunch: false, work: () =>
+        {
+            foreach (var (key, choice) in changes) Spaces.ChangeItem(State, key, choice);
+        });
+        Log($"Changed what the spaces share ({changes.Count} item(s)).");
+        return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// Moves one conversation to another space, so it can be continued there: its transcript, file history, to-dos,
+    /// prompt history and its entry in Claude Desktop's sidebar. Claude Desktop is closed while it moves.
+    /// </summary>
+    public Task MoveConversationAsync(string sessionId, string toSpaceId) => RunAsync(() =>
+    {
+        var target = State.Spaces.Find(toSpaceId) ?? throw new DeckException("That space no longer exists.");
+        var from = Spaces.FindConversation(State, sessionId)?.Space;
+        if (from is null) throw new DeckException("That conversation was not found. It may have been moved or deleted.");
+        if (from.Id == target.Id) return Task.CompletedTask;
+
+        var filed = 0;
+        WithClaudeClosed(relaunch: false, work: () =>
+        {
+            var undo = Spaces.MoveConversation(State, sessionId, target.Id);
+            try
+            {
+                if (Desktop.Install is not null && target.DesktopProfileId is { } d && State.Find(d) is { } account)
+                    filed = Desktop.MoveSessionEntry(State, sessionId, account).Filed;
+            }
+            catch
+            {
+                undo();
+                throw;
+            }
+        });
+        Log($"Moved a conversation from \"{from.Name}\" to \"{target.Name}\"" +
+            (filed > 0 ? " (also in Claude Desktop's list)." : "."));
+        return Task.CompletedTask;
+    });
+
+    public Task UpdateSpacesAsync(Action<SpaceSettings> change) => RunAsync(() =>
+    {
+        change(State.Spaces);
+        return Task.CompletedTask;
+    });
+
+    /// <summary>Brings every space's data back into ~/.claude. Returns what had to stay parked.</summary>
+    public async Task<List<string>> TurnOffSpacesAsync()
+    {
+        var leftovers = new List<string>();
+        await RunAsync(() =>
+        {
+            WithClaudeClosed(relaunch: false, work: () => leftovers = Spaces.TurnOff(State));
+            Log(leftovers.Count == 0
+                ? "Spaces are turned off. All conversations are back together."
+                : $"Spaces are turned off. {leftovers.Count} item(s) would have overwritten something and stay in {Paths.SpacesStore}.");
+            return Task.CompletedTask;
+        });
+        return leftovers;
+    }
+
+    /// <summary>
+    /// Nothing may hold ~/.claude while its folders move: closes Claude Desktop (and everything it started),
+    /// refuses if a terminal Claude Code is still open, runs <paramref name="work"/>, then starts Claude Desktop
+    /// again if it was open (or always, with <paramref name="relaunch"/>, as account switches do).
+    /// </summary>
+    private void WithClaudeClosed(bool relaunch, Action work)
+    {
+        Desktop.Reconcile(State);
+        var install = Desktop.Install;
+        var wasRunning = install is not null && _host.IsRunning(install);
+        if (install is not null && !_host.Close(install, TimeSpan.FromSeconds(20)))
+            throw new DeckException("Claude Desktop did not close. Quit it from its tray or menu bar icon and try again.");
+        try
+        {
+            var others = _host.RunningClaudeCode();
+            if (others.Count > 0)
+                throw new DeckException("Claude Code is still running in a terminal or editor (" + string.Join(", ", others) +
+                                        "). Close those sessions first, so no conversation is cut off mid-write. Nothing was changed.");
+            work();
+        }
+        finally
+        {
+            if (install is not null && (wasRunning || relaunch)) _host.Launch(install);
+        }
+    }
 
     public Task AddDesktopAsync(string name, bool copySettings) => RunAsync(() =>
     {
@@ -97,6 +242,7 @@ public sealed class DeckService
 
     private void Scan()
     {
+        Spaces.Reconcile(State, m => Log(m));
         ClaudeCode.Sync(State, m => Log(m));
         Codex.Sync(State, m => Log(m));
         Desktop.Reconcile(State, m => Log(m));
@@ -115,6 +261,8 @@ public sealed class DeckService
         {
             var best = State.Of(AccountKind.ClaudeCode)
                 .Where(p => p != active && p.Usage is { Error: null, Peak: not null } u && u.Peak < s.AutoSwitchThreshold
+                            // Never jump to an account of another space: its conversations are parked.
+                            && (!State.Spaces.Enabled || State.Spaces.Owner(p) is null || State.Spaces.Owner(p)!.Id == State.Spaces.ActiveId)
                             && u.At > DateTimeOffset.Now.AddMinutes(-30))
                 .OrderBy(p => p.Usage!.Peak)
                 .FirstOrDefault();

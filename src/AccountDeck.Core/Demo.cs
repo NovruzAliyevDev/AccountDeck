@@ -45,9 +45,35 @@ public static class Demo
         desktop.AddNew(state, "Personal", copySettings: false, relaunch: false);
         SeedDesktop(host.Install.DataDir, "demo-personal", 12, 30);
 
+        SeedClaudeFolder(paths);
         state.Log.Clear();
         new StateStore(paths).Save(state);
         return (paths, host, new HttpClient(new DemoApi()));
+    }
+
+    /// <summary>A small mixed ~/.claude, so "Set up spaces" has instructions, skills and projects to sort.</summary>
+    private static void SeedClaudeFolder(AppPaths paths)
+    {
+        void Write(string rel, string text)
+        {
+            var path = Path.Combine(paths.ClaudeDir, rel.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+        }
+        Write("CLAUDE.md", "# My rules\n\n## Read first, act later\nList the problems before editing anything.\n\n" +
+                           "## Company database\nUse the Acme dev database for every Acme ticket.\n\n## Commit messages\nStart with the ticket key.\n");
+        Write("skills/review-ticket/SKILL.md", "---\nname: review-ticket\ndescription: Review an Acme ticket before handing it to QA\n---\n");
+        Write("skills/sketch/SKILL.md", "---\nname: sketch\ndescription: Turn an idea into a quick diagram\n---\n");
+        Write("settings.json", "{}");
+        var history = new System.Text.StringBuilder();
+        foreach (var (project, session, n) in new[] { ("C:\\Acme\\Billing", "demo-1", 3), ("C:\\Acme\\Portal", "demo-2", 5), ("D:\\Games\\Tiles", "demo-3", 2) })
+        {
+            var dir = SpaceItems.ProjectDirName(project);
+            for (var i = 0; i < n; i++)
+                Write($"projects/{dir}/{session}-{i}.jsonl", new JsonObject { ["cwd"] = project }.ToJsonString() + "\n");
+            history.Append(new JsonObject { ["display"] = "demo prompt", ["timestamp"] = n, ["project"] = project }.ToJsonString()).Append('\n');
+        }
+        Write("history.jsonl", history.ToString());
     }
 
     private static void SeedDesktop(string dir, string accountUuid, int fiveHour, int sevenDay)

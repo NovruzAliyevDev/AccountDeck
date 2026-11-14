@@ -27,6 +27,13 @@ public sealed class MacDesktopHost(AppPaths paths) : IDesktopHost
         return new DesktopInstall(data, false, app is null ? DefaultBundleId : BundleId(app), app);
     }
 
+    /// <summary>The Claude Code CLI runs as "claude"; the app itself is "Claude", which this ordinal match leaves out.</summary>
+    public IReadOnlyList<string> RunningClaudeCode() =>
+        System.Diagnostics.Process.GetProcesses()
+            .Where(p => string.Equals(p.ProcessName, "claude", StringComparison.Ordinal))
+            .Select(p => $"{p.ProcessName} ({p.Id})")
+            .ToList();
+
     public bool IsRunning(DesktopInstall install) => Targets(install, appOnly: true).Count > 0;
 
     public bool Close(DesktopInstall install, TimeSpan timeout)

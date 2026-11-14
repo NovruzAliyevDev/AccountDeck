@@ -55,6 +55,18 @@ public sealed class SectionVM
 
 public sealed record LogVM(string Time, string Message, bool IsError);
 
+public sealed class SpaceVM
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public string Detail { get; init; } = "";
+    public bool IsActive { get; init; }
+    public bool CanSwitch => !IsActive;
+    public required ICommand Switch { get; init; }
+
+    public string Signature => $"{Id}|{Name}|{Detail}|{IsActive}";
+}
+
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private static readonly Brush Calm = Frozen("#2F8F6B"), Warn = Frozen("#C98A00"), Critical = Frozen("#D13438");
@@ -79,10 +91,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Directory.CreateDirectory(dir);
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = false });
         });
+        SetUpSpacesCommand = new RelayCommand(OpenSpaces);
+        TurnOffSpacesCommand = new RelayCommand(TurnOffSpaces);
+        ConversationsCommand = new RelayCommand(() => new ConversationsWindow(new ConversationsViewModel(_service)).ShowDialog());
         _service.Changed += () => _ui.BeginInvoke(Rebuild);
     }
 
     public bool IsDemo { get; }
+    public ObservableCollection<SpaceVM> Spaces { get; } = new();
+    public bool SpacesEnabled { get; private set { Set(ref field, value); Raise(nameof(SpacesOff)); } }
+    public bool SpacesOff => !SpacesEnabled;
+    public ICommand SetUpSpacesCommand { get; }
+    public ICommand TurnOffSpacesCommand { get; }
+    public ICommand ConversationsCommand { get; }
     public ObservableCollection<SectionVM> Sections { get; } = new();
     public ObservableCollection<LogVM> Log { get; } = new();
     public ICommand RefreshCommand { get; }
@@ -176,13 +197,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var state = _service.State;
         _desktopRunning = await Task.Run(() => _service.Desktop.IsRunning);
         var sections = new List<SectionVM> { DesktopSection(state), CliSection(state, _service.ClaudeCode), CliSection(state, _service.Codex) };
+        var spaces = state.Spaces.Enabled ? state.Spaces.List.Select(s => SpaceItem(state, s)).ToList() : new List<SpaceVM>();
+        SpacesEnabled = state.Spaces.Enabled;
 
-        var signature = string.Join("#", sections.Select(s => s.Signature));
+        var signature = string.Join("#", sections.Select(s => s.Signature)) + "#" + string.Join(";", spaces.Select(s => s.Signature));
         if (signature != _signature)
         {
             _signature = signature;
             Sections.Clear();
             foreach (var s in sections) Sections.Add(s);
+            Spaces.Clear();
+            foreach (var s in spaces) Spaces.Add(s);
             Rebuilt?.Invoke();
         }
 
@@ -273,6 +298,61 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private static string? Plan(string? plan) =>
         string.IsNullOrEmpty(plan) ? null : plan.Length <= 4 && plan != "API key" ? char.ToUpper(plan[0]) + plan[1..] + " plan" : plan;
+
+    private SpaceVM SpaceItem(AppState state, Space s)
+    {
+        var accounts = new[] { state.Find(s.DesktopProfileId ?? "")?.Name, state.Find(s.ClaudeCodeProfileId ?? "")?.Name }
+            .Where(n => !string.IsNullOrEmpty(n)).Distinct();
+        return new SpaceVM
+        {
+            Id = s.Id,
+            Name = s.Name,
+            Detail = string.Join(" · ", accounts),
+            IsActive = s.Id == state.Spaces.ActiveId,
+            Switch = new RelayCommand(() => SwitchSpace(s.Id)),
+        };
+    }
+
+    public void SwitchSpace(string id)
+    {
+        var space = _service.State.Spaces.Find(id);
+        if (space is null || space.Id == _service.State.Spaces.ActiveId) return;
+        var answer = Dialog.Ask($"Switch to \"{space.Name}\"",
+            "Claude Desktop will close, your conversations and files for this space are brought in, the accounts are switched, and Claude Desktop opens again.\n\n" +
+            "Close any Claude Code terminals first. Anything Claude Desktop is working on right now will be stopped.", "Switch");
+        if (answer is null) return;
+        _ = Run($"Switching to {space.Name}…", () => _service.SwitchSpaceAsync(id));
+    }
+
+    private void OpenSpaces()
+    {
+        var vm = new SpacesViewModel(_service);
+        if (new SpacesWindow(vm).ShowDialog() != true) return;
+        if (vm.IsSetup)
+        {
+            _ = Run("Sorting your conversations into spaces…", async () =>
+            {
+                var backup = await _service.SetUpSpacesAsync(vm.BuildPlan());
+                _ui.Invoke(() => Dialog.Ask("Spaces are ready",
+                    $"\"{_service.State.Spaces.Active?.Name}\" is in use now. Switch spaces at the top of the Accounts tab or from the tray icon.\n\n" +
+                    $"CLAUDE.md and your prompt history were backed up to:\n{backup}", "OK", showCancel: false));
+            });
+        }
+        else
+        {
+            _ = Run("Saving…", vm.SaveEditsAsync);
+        }
+    }
+
+    private void TurnOffSpaces()
+    {
+        var answer = Dialog.Ask("Turn off spaces?",
+            "Every space's conversations, file history and prompt history are put back together in one place. Instructions that belonged to one space become shared again.\n\n" +
+            "Anything that would overwrite something (for example each space's own copy of settings) stays in Account Deck's data folder and is listed in the Activity tab.",
+            "Turn off");
+        if (answer is null) return;
+        _ = Run("Putting everything back together…", _service.TurnOffSpacesAsync);
+    }
 
     public void SwitchTo(string id)
     {

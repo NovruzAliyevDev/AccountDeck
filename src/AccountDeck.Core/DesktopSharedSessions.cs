@@ -50,7 +50,7 @@ public sealed partial class DesktopSwitcher
 
         state.ActiveIds[AccountKind.Desktop] = target.Id;
         target.LastUsedAt = DateTimeOffset.Now;
-        SyncSessions(state, live);
+        if (!state.Spaces.Enabled) SyncSessions(state, live);
     }
 
     private static void BestEffort(Action undo)
@@ -111,6 +111,69 @@ public sealed partial class DesktopSwitcher
         {
             File.Move(from, to, true);
         }
+    }
+
+    /// <summary>
+    /// Re-files Claude Desktop's sidebar entry for one Code conversation (matched by its Claude Code session id)
+    /// from wherever it is to <paramref name="to"/>'s account, in every organisation folder of that account.
+    /// Works in both modes: with shared sessions every account's folder is in the live data folder; otherwise a
+    /// parked account's folder is in its parked copy. Returns how many entries were filed, and an undo action.
+    /// Claude Desktop must be closed.
+    /// </summary>
+    public (int Filed, Action Undo) MoveSessionEntry(AppState state, string cliSessionId, Profile to)
+    {
+        var install = (Install ??= host.Detect()) ?? throw new DeckException("Claude Desktop was not found on this computer.");
+        var shared = state.Settings.ShareDesktopSessions;
+        string RootOf(Profile p) => Path.Combine(shared || state.IsActive(p) ? install.DataDir : Parked(p.Id), SessionsFolder);
+
+        // Every place an entry for this conversation can be: all accounts' folders we know of.
+        var roots = state.Of(AccountKind.Desktop).Select(RootOf).Append(Path.Combine(install.DataDir, SessionsFolder))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
+        var sources = new List<(string Path, string Text)>();
+        foreach (var root in roots)
+        foreach (var file in Directory.EnumerateFiles(root, "local_*.json", SearchOption.AllDirectories))
+        {
+            var text = File.ReadAllText(file);
+            if (!text.Contains(cliSessionId, StringComparison.Ordinal)) continue;
+            if (FileUtil.ReadJsonObject(file)?["cliSessionId"]?.GetValue<string>() == cliSessionId) sources.Add((file, text));
+        }
+        if (sources.Count == 0 || string.IsNullOrEmpty(to.AccountKey)) return (0, () => { });
+
+        var accountDir = Path.Combine(RootOf(to), to.AccountKey);
+        var orgs = Directory.Exists(accountDir) ? Directory.GetDirectories(accountDir) : [];
+        if (orgs.Length == 0) return (0, () => { });
+
+        var newest = sources.MaxBy(s => File.GetLastWriteTimeUtc(s.Path));
+        var name = Path.GetFileName(newest.Path);
+        var created = new List<string>();
+        var removed = new List<(string Path, string Text)>();
+        void Undo()
+        {
+            foreach (var f in created) BestEffort(() => File.Delete(f));
+            foreach (var (path, text) in removed) BestEffort(() => File.WriteAllText(path, text));
+        }
+        try
+        {
+            foreach (var org in orgs)
+            {
+                var dest = Path.Combine(org, name);
+                if (sources.Any(s => string.Equals(s.Path, dest, StringComparison.OrdinalIgnoreCase))) continue;
+                File.WriteAllText(dest, newest.Text);
+                created.Add(dest);
+            }
+            var targetFolders = new HashSet<string>(orgs, StringComparer.OrdinalIgnoreCase);
+            foreach (var source in sources.Where(s => !targetFolders.Contains(Path.GetDirectoryName(s.Path)!)))
+            {
+                File.Delete(source.Path);
+                removed.Add(source);
+            }
+        }
+        catch
+        {
+            Undo();
+            throw;
+        }
+        return (orgs.Length, Undo);
     }
 
     private sealed record SessionFile(string Account, string Org, string Name, string Path, DateTime Time);

@@ -85,6 +85,13 @@ public sealed class WindowsDesktopHost(AppPaths paths) : IDesktopHost
             Process.Start(new ProcessStartInfo(install.ExePath) { UseShellExecute = true });
     }
 
+    /// <summary>Every claude.exe that is not Claude Desktop itself: terminal sessions and IDE extensions.</summary>
+    public IReadOnlyList<string> RunningClaudeCode() =>
+        Process.GetProcessesByName("claude")
+            .Where(p => ImagePath(p.Id) is { } path && !path.Contains("\\WindowsApps\\Claude_", StringComparison.OrdinalIgnoreCase))
+            .Select(p => $"{p.ProcessName} ({p.Id})")
+            .ToList();
+
     public void DeleteFolder(string dir) =>
         FileSystem.DeleteDirectory(dir, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
 

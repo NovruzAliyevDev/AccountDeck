@@ -51,6 +51,64 @@ public sealed class Settings
     public int AutoSwitchThreshold { get; set; } = 95;
 }
 
+/// <summary>
+/// A side such as "Work" or "Personal": a Claude Desktop account, a Claude Code account and its own
+/// private part of ~/.claude (conversations, file history, prompt history, and whatever the user marked as its own).
+/// </summary>
+public sealed class Space
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
+    public string Name { get; set; } = "";
+    public string? DesktopProfileId { get; set; }
+    public string? ClaudeCodeProfileId { get; set; }
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<ItemMode>))]
+public enum ItemMode
+{
+    /// <summary>One copy, always in place, seen by every space.</summary>
+    Shared,
+    /// <summary>Every space has its own copy.</summary>
+    Separate,
+    /// <summary>Only the space named in <see cref="ItemChoice.SpaceId"/> has it.</summary>
+    OnlyIn,
+}
+
+/// <summary>What happens to one item of ~/.claude (a rule file, a skill, settings.json, ...) when spaces switch.</summary>
+public sealed class ItemChoice
+{
+    public ItemMode Mode { get; set; }
+    public string? SpaceId { get; set; }
+
+    public static ItemChoice Shared => new() { Mode = ItemMode.Shared };
+    public static ItemChoice Separate => new() { Mode = ItemMode.Separate };
+    public static ItemChoice Only(string spaceId) => new() { Mode = ItemMode.OnlyIn, SpaceId = spaceId };
+
+    /// <summary>Whether the item is swapped in and out together with this space.</summary>
+    public bool BelongsTo(string spaceId) => Mode == ItemMode.Separate || (Mode == ItemMode.OnlyIn && SpaceId == spaceId);
+}
+
+public sealed class SpaceSettings
+{
+    public bool Enabled { get; set; }
+    public List<Space> List { get; set; } = new();
+    public string? ActiveId { get; set; }
+    /// <summary>Item key (see <see cref="SpaceItems"/>) to choice. Items not listed are shared.</summary>
+    public Dictionary<string, ItemChoice> Items { get; set; } = new();
+
+    public Space? Find(string? id) => List.FirstOrDefault(s => s.Id == id);
+    public Space? Active => Find(ActiveId);
+    public ItemChoice ChoiceFor(string key) => Items.TryGetValue(key, out var c) ? c : ItemChoice.Shared;
+
+    /// <summary>The space a saved account is linked to, if any.</summary>
+    public Space? Owner(Profile p) => p.Kind switch
+    {
+        AccountKind.Desktop => List.FirstOrDefault(s => s.DesktopProfileId == p.Id),
+        AccountKind.ClaudeCode => List.FirstOrDefault(s => s.ClaudeCodeProfileId == p.Id),
+        _ => null,
+    };
+}
+
 public sealed class LogEntry
 {
     public DateTimeOffset At { get; set; } = DateTimeOffset.Now;
@@ -63,6 +121,7 @@ public sealed class AppState
     public List<Profile> Profiles { get; set; } = new();
     public Dictionary<AccountKind, string> ActiveIds { get; set; } = new();
     public Settings Settings { get; set; } = new();
+    public SpaceSettings Spaces { get; set; } = new();
     public List<LogEntry> Log { get; set; } = new();
 
     public IEnumerable<Profile> Of(AccountKind kind) => Profiles.Where(p => p.Kind == kind);
