@@ -10,6 +10,10 @@ public sealed class AppPaths(string localAppData, string roamingAppData, string 
     public string AppDataDir => Path.Combine(Local, "AccountDeck");
     public string StateFile => Path.Combine(AppDataDir, "state.json");
     public string DesktopStore => Path.Combine(AppDataDir, "desktop-profiles");
+    /// <summary>Parked private items of every space that is not live, one folder per space.</summary>
+    public string SpacesStore => Path.Combine(AppDataDir, "spaces");
+    /// <summary>Written before a space switch starts and removed when it ends; used to undo an interrupted switch.</summary>
+    public string SpaceJournal => Path.Combine(SpacesStore, "switch-journal.json");
 
     public string ClaudeDir => Path.Combine(UserProfile, ".claude");
     public string ClaudeCredentialsFile => Path.Combine(ClaudeDir, ".credentials.json");

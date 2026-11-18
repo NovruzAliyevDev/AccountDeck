@@ -13,6 +13,8 @@
             <DockPanel Margin="0,0,0,14">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding LastChecked}" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Button Content="Hub" Command="{Binding HubCommand}" Margin="0,0,8,0"
+                            ToolTip="Conversations, storage and projects of every account: search, move, delete" />
                     <Button Content="Refresh" Command="{Binding RefreshCommand}" ToolTip="Look for new sign-ins and update usage now" />
                 </StackPanel>
                 <StackPanel>
@@ -28,6 +30,35 @@
                             <Border Style="{StaticResource Card}" Margin="0,0,0,16" Visibility="{Binding IsDemo, Converter={StaticResource Show}}">
                                 <TextBlock TextWrapping="Wrap" Text="Demo mode: these are sample accounts in a temporary folder. Nothing here touches your real Claude or Codex sign-ins." />
                             </Border>
+                            <StackPanel Margin="0,0,0,24" Visibility="{Binding SpacesEnabled, Converter={StaticResource Show}}">
+                                <TextBlock Text="Spaces" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Each space has its own conversations and accounts. Switching a space switches everything that belongs to it." Style="{StaticResource Muted}" Margin="0,6,0,10" />
+                                <ItemsControl ItemsSource="{Binding Spaces}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource Card}" Margin="0,0,8,8" MinWidth="220">
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Right" Content="Switch" Command="{Binding Switch}" Style="{DynamicResource AccentButtonStyle}"
+                                                            VerticalAlignment="Center" Margin="12,0,0,0" Visibility="{Binding CanSwitch, Converter={StaticResource Show}}" />
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" FontSize="12" />
+                                                        <Border Style="{StaticResource Pill}" Background="#2F8F6B" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                                                Visibility="{Binding IsActive, Converter={StaticResource Show}}">
+                                                            <TextBlock Text="In use now" FontSize="12" Foreground="White" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                             <ItemsControl ItemsSource="{Binding Sections}" Focusable="False">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -147,6 +178,16 @@
                             <CheckBox Content="Share sessions between accounts" IsChecked="{Binding ShareDesktopSessions}" />
                             <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="28,0,0,0"
                                        Text="On: all accounts use the same Claude Desktop data, so your Code sessions, settings and files are there whichever account is signed in. Only the sign-in is swapped. Off: every account gets its own separate copy of everything. An account added in one mode can only be switched to in that mode." />
+
+                            <TextBlock Text="Spaces" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,8" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,8"
+                                       Text="Keep work and personal apart: each space gets its own conversations, file history and prompt history, and its own accounts. You choose, item by item, which instructions and skills both spaces share." />
+                            <Button Content="Set up spaces…" Command="{Binding SetUpSpacesCommand}" HorizontalAlignment="Left"
+                                    Visibility="{Binding SpacesOff, Converter={StaticResource Show}}" />
+                            <StackPanel Orientation="Horizontal" Visibility="{Binding SpacesEnabled, Converter={StaticResource Show}}">
+                                <Button Content="Change spaces and what they share…" Command="{Binding SetUpSpacesCommand}" />
+                                <Button Content="Turn off spaces…" Command="{Binding TurnOffSpacesCommand}" Margin="8,0,0,0" />
+                            </StackPanel>
 
                             <TextBlock Text="Usage" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,8" />
                             <StackPanel Orientation="Horizontal">

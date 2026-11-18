@@ -14,6 +14,8 @@ public interface IDesktopHost
     bool Close(DesktopInstall install, TimeSpan timeout);
     void Launch(DesktopInstall install);
     void DeleteFolder(string dir);
+    /// <summary>Claude Code processes still running on their own (terminals), as "name (pid)". Used before moving ~/.claude.</summary>
+    IReadOnlyList<string> RunningClaudeCode() => [];
 }
 
 /// <summary>
@@ -109,10 +111,17 @@ public sealed partial class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         foreach (var p in state.Of(AccountKind.Desktop))
             ReadDetails(p, state.IsActive(p) ? live : Parked(p.Id), state, shared);
 
-        if (shared && Directory.Exists(live))
+        // With spaces, each account's sidebar must list only its own sessions: their files are parked with the other space.
+        if (shared && !state.Spaces.Enabled && Directory.Exists(live))
         {
             var copied = SyncSessions(state, live);
             if (copied > 0) log?.Invoke($"Shared {copied} Claude Desktop session(s) between accounts. Restart Claude Desktop if they do not show up.");
+        }
+        // With spaces, each space's account lists all of that space's conversations, also those another account filed.
+        if (state.Spaces.Enabled && Directory.Exists(live))
+        {
+            var listed = ListOwnConversations(state, SpaceItems.SessionOwners(paths, state.Spaces));
+            if (listed > 0) log?.Invoke($"Added {listed} conversation(s) of this space to Claude Desktop's list. Restart Claude Desktop if they do not show up.");
         }
     }
 
@@ -246,10 +255,16 @@ public sealed partial class DesktopSwitcher(AppPaths paths, IDesktopHost host)
         {
             var uuid = (FileUtil.ReadJsonObject(Path.Combine(dir, "config.json")) ?? FileUtil.ReadJsonObject(Path.Combine(dir, AuthConfigName)))
                 ?["lastKnownAccountUuid"]?.GetValue<string>();
-            if (!string.IsNullOrEmpty(uuid)) p.AccountKey = uuid;
+            if (!string.IsNullOrEmpty(uuid) && uuid != p.AccountKey)
+            {
+                // Another account is signed in on this profile now: what was known about the old one no longer applies.
+                p.AccountKey = uuid;
+                p.Email = null;
+                p.Plan = null;
+            }
             // Claude Desktop does not store the e-mail in plain text; borrow it from a Claude Code sign-in of the same account.
             var twin = state.Of(AccountKind.ClaudeCode).FirstOrDefault(c => c.AccountKey == p.AccountKey && c.Email is not null);
-            if (twin is not null) { p.Email = twin.Email; p.Plan ??= twin.Plan; }
+            if (twin is not null) { p.Email = twin.Email; p.Plan = twin.Plan ?? p.Plan; }
 
             var samples = FileUtil.ReadJsonObject(Path.Combine(dir, "plan-usage-history.json"))?["samples"] as JsonArray;
             var last = samples?.OfType<JsonObject>().LastOrDefault();

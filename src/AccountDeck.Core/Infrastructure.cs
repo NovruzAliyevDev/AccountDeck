@@ -91,6 +91,8 @@ public static class FileUtil
     public static void MoveDirectory(string from, string to, int attempts = 24, int delayMs = 500)
     {
         if (RetryDelayOverrideMs is { } d) delayMs = d;
+        if (Directory.Exists(to) || File.Exists(to))
+            throw new DeckException($"\"{from}\" could not be moved, because \"{to}\" is already there. Nothing was overwritten.");
         Directory.CreateDirectory(Path.GetDirectoryName(to)!);
         for (var i = 1; ; i++)
         {
@@ -101,14 +103,16 @@ public static class FileUtil
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                if (i >= attempts)
-                    throw new DeckException(
-                        "Another program is still using Claude's files, so the account could not be switched. " +
-                        "Close any terminals or editors that were opened from Claude and try again.", e);
+                if (i >= attempts) throw InUse(from, e);
                 Thread.Sleep(delayMs);
             }
         }
     }
+
+    /// <summary>The error for a file or folder that another program keeps from being moved: which one, who holds it, and what Windows said.</summary>
+    public static DeckException InUse(string path, Exception e) =>
+        new($"Another program is still using \"{path}\", so it could not be moved and nothing was changed." +
+            FileLocks.Describe(path) + $" Close it and try again. ({e.Message})", e);
 
     public static string Sha256Short(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16].ToLowerInvariant();
