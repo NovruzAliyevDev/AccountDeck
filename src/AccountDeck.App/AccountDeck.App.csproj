@@ -11,7 +11,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>AccountDeck</AssemblyName>
     <RootNamespace>AccountDeck.App</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <!-- WPF0001: the Fluent theme (ThemeMode) is still marked experimental. -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
