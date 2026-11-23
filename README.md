@@ -63,6 +63,10 @@ the account with the most room left.
   Claude Desktop lists Code sessions per account, so Account Deck also copies each session's entry
   to the other accounts (newest version wins, deleted sessions stay deleted). Cowork sessions are
   not copied. Turn the setting off to give every account its own complete, separate data folder.
+- **After the first switch you may have to end Claude in Task Manager.** If Claude Desktop does not
+  come back properly the first time you switch with Account Deck, open Task Manager, end every
+  **Claude** process, and start Claude again. This is needed only once: from the next switch on,
+  sessions are shared between the accounts without any problem.
 - **Claude Code and Codex switch instantly**, but a session that is already open keeps the account
   it started with until you restart it.
 - Claude Desktop usage is what Claude Desktop itself last recorded, so it can be a little old for
